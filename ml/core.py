@@ -1,6 +1,4 @@
 """
-MolPropLab 核心模块 — 整合的机器学习工具函数，减少文件数量。
-
 主要功能：
 - sanitize_smiles, mol_to_sdf：SMILES标准化和SDF生成
 - featurize_descriptors, featurize_ecfp：分子描述符和ECFP指纹特征提取
@@ -12,7 +10,7 @@ MolPropLab 核心模块 — 整合的机器学习工具函数，减少文件数�
 """
 
 from __future__ import annotations
-# 必须在所有导入之前设置环境变量，避免PyTorch的shm.dll加载问题
+# 在所有导入之前设置环境变量，避免PyTorch的shm.dll加载问题
 import os
 os.environ.setdefault("TORCH_SHM_DISABLE", "1")
 
