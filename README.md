@@ -4,7 +4,7 @@
 
 ## 1. 核心特性
 
-- **多性质预测：** 支持同时预测 8 种分子性质（LogP、溶解度、沸点、熔点、pKa、毒性、生物活性、ADMET清除率）
+- **多性质预测：** 支持同时预测 10 种分子性质（分子量、LogP、LogS、pKa、沸点、熔点、折射率、蒸气压、密度、闪点）
 - **Python 端 ML：** RDKit 预处理、分子描述符、ECFP（1024）、PyTorch Geometric GIN、LightGBM/RandomForest 基线模型  
 - **不确定性估计：** MC-Dropout（GNN）/ 小型集成（Baseline）  
 - **可解释性：** SHAP（基线模型）、梯度显著性（GNN）→ 原子级重要性 JSON  
@@ -144,14 +144,16 @@ npm run dev
 5. 点击 **Predict**
 6. 你会看到：
    - **所有性质的预测结果表格**，包括：
-     - LogP（脂水分配系数）
-     - 溶解度（Solubility）
-     - 沸点（Boiling Point）
-     - 熔点（Melting Point）
+     - 分子量 (MW)
+     - LogP（脂溶性）
+     - LogS（水溶解度）
      - pKa
-     - 毒性（Toxicity）
-     - 生物活性（Bioactivity）
-     - ADMET 清除率
+     - 沸点
+     - 熔点
+     - 折射率
+     - 蒸气压
+     - 密度
+     - 闪点
    - 每个性质都显示**预测值**和**不确定性 (σ)**
    - 右侧 **3D 分子视图**，带原子级别热力图（重要性越高颜色越亮）
 
@@ -180,7 +182,7 @@ python train_baseline.py
 python train_gnn.py
 ```
 
-> **注意**：训练脚本会自动为所有 8 种性质训练模型。首次使用建议先运行 `python train_baseline.py` 来训练所有性质的基线模型，这样预测时才能显示所有性质的结果。
+> **注意**：训练脚本会自动为所有 10 种性质训练模型。首次使用建议先运行 `python train_baseline.py` 来训练所有性质的基线模型，这样预测时才能显示所有性质的结果。
 
 ### 评估模型
 
@@ -204,7 +206,7 @@ python inference.py --csv data/logp.csv --output out.csv --model baseline
 python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
 ```
 
-> **注意**：单条预测会返回所有 8 种性质的预测结果。批量预测的输出文件会包含所有性质的列（格式：`{property}_prediction` 和 `{property}_uncertainty`）。
+> **注意**：单条预测会返回所有 10 种性质的预测结果。批量预测的输出文件会包含所有性质的列（格式：`{property}_prediction` 和 `{property}_uncertainty`）。
 
 ---
 
@@ -228,25 +230,37 @@ python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
 ```json
 {
   "properties": {
+    "molecular_weight": {
+      "name": "分子量 (MW)",
+      "unit": "g/mol",
+      "prediction": 46.07,
+      "uncertainty": 0.5
+    },
     "logp": {
-      "name": "LogP (脂水分配系数)",
+      "name": "LogP (脂溶性)",
       "unit": "",
       "prediction": 0.3476,
       "uncertainty": 0.0117
     },
-    "solubility": {
-      "name": "溶解度 (Solubility)",
+    "logs": {
+      "name": "LogS (水溶解度)",
       "unit": "log(mol/L)",
       "prediction": -0.1301,
       "uncertainty": 0.0474
     },
+    "pka": {
+      "name": "pKa",
+      "unit": "",
+      "prediction": 15.9,
+      "uncertainty": 0.5
+    },
     "boiling_point": {
-      "name": "沸点 (Boiling Point)",
+      "name": "沸点",
       "unit": "°C",
       "prediction": 78.4,
       "uncertainty": 3.0866
     },
-    // ... 其他性质
+    // ... 其他性质（熔点、折射率、蒸气压、密度、闪点）
   },
   "atom_importances": [0.0, 0.5, 1.0, ...],
   "sdf": "...",
@@ -377,16 +391,18 @@ python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
 
 ### 多性质预测
 
-系统支持同时预测以下 8 种分子性质：
+系统支持同时预测以下 10 种分子性质：
 
-1. **LogP（脂水分配系数）**：衡量分子的亲脂性
-2. **溶解度（Solubility）**：log(mol/L) 单位
-3. **沸点（Boiling Point）**：°C 单位
-4. **熔点（Melting Point）**：°C 单位
-5. **pKa**：酸解离常数
-6. **毒性（Toxicity）**：LD50 (mol/kg) 单位
-7. **生物活性（Bioactivity）**：-log(IC50) 单位
-8. **ADMET 清除率**：mL/min/kg 单位
+1. **分子量 (MW)**：g/mol 单位
+2. **LogP（脂溶性）**：衡量分子的亲脂性
+3. **LogS（水溶解度）**：log(mol/L) 单位
+4. **pKa**：酸解离常数
+5. **沸点**：°C 单位
+6. **熔点**：°C 单位
+7. **折射率**：无量纲
+8. **蒸气压**：Pa 单位
+9. **密度**：g/cm³ 单位
+10. **闪点**：°C 单位
 
 每个性质都有独立的模型，训练时会为每个性质分别训练基线模型和 GNN 模型。预测时会同时调用所有性质的模型，返回完整的预测结果。
 
@@ -442,11 +458,16 @@ MolPropLab/
 │   ├── eval_baseline.py  # 评估基线模型
 │   ├── eval_gnn.py      # 评估 GNN 模型
 │   ├── data/            # 数据目录（包含各性质的CSV文件）
+│   │   ├── molecular_weight.csv
 │   │   ├── logp.csv
-│   │   ├── solubility.csv
+│   │   ├── logs.csv
+│   │   ├── pka.csv
 │   │   ├── boiling_point.csv
 │   │   ├── melting_point.csv
-│   │   └── ... (其他性质数据)
+│   │   ├── refractive_index.csv
+│   │   ├── vapor_pressure.csv
+│   │   ├── density.csv
+│   │   └── flash_point.csv
 │   └── saved_models/    # 保存的模型（每个性质一个模型文件）
 ├── server/              # Node.js 后端
 │   ├── src/

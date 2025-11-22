@@ -114,14 +114,16 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 # 定义所有要预测的分子性质及其数据文件
 PROPERTIES = {
-    "logp": {"name": "LogP (脂水分配系数)", "unit": "", "data_file": "logp.csv"},
-    "solubility": {"name": "溶解度 (Solubility)", "unit": "log(mol/L)", "data_file": "solubility.csv"},
-    "boiling_point": {"name": "沸点 (Boiling Point)", "unit": "°C", "data_file": "boiling_point.csv"},
-    "melting_point": {"name": "熔点 (Melting Point)", "unit": "°C", "data_file": "melting_point.csv"},
+    "molecular_weight": {"name": "分子量 (MW)", "unit": "g/mol", "data_file": "molecular_weight.csv"},
+    "logp": {"name": "LogP (脂溶性)", "unit": "", "data_file": "logp.csv"},
+    "logs": {"name": "LogS (水溶解度)", "unit": "log(mol/L)", "data_file": "logs.csv"},
     "pka": {"name": "pKa", "unit": "", "data_file": "pka.csv"},
-    "toxicity": {"name": "毒性 (Toxicity)", "unit": "LD50 (mol/kg)", "data_file": "toxicity.csv"},
-    "bioactivity": {"name": "生物活性 (Bioactivity)", "unit": "-log(IC50)", "data_file": "bioactivity.csv"},
-    "admet_clearance": {"name": "ADMET 清除率", "unit": "mL/min/kg", "data_file": "admet_clearance.csv"}
+    "boiling_point": {"name": "沸点", "unit": "°C", "data_file": "boiling_point.csv"},
+    "melting_point": {"name": "熔点", "unit": "°C", "data_file": "melting_point.csv"},
+    "refractive_index": {"name": "折射率", "unit": "", "data_file": "refractive_index.csv"},
+    "vapor_pressure": {"name": "蒸气压", "unit": "Pa", "data_file": "vapor_pressure.csv"},
+    "density": {"name": "密度", "unit": "g/cm³", "data_file": "density.csv"},
+    "flash_point": {"name": "闪点", "unit": "°C", "data_file": "flash_point.csv"}
 }
 
 RNG = np.random.default_rng(42)
@@ -311,15 +313,27 @@ class BaselineModel:
                     max_depth = 7
                     min_gain_to_split = 0.0
                 else:
-                    # 大数据集使用默认参数
-                    n_estimators = 400
-                    min_data_in_leaf = 20
-                    min_data_in_bin = 5
-                    min_child_samples = 20
-                    subsample = 0.9
-                    colsample_bytree = 0.9
-                    max_depth = -1  # 不限制深度
-                    min_gain_to_split = 0.0
+                    # 大数据集（>=500）根据数据量进一步优化参数
+                    if n_samples < 1000:
+                        # 中等大数据集（500-1000）：使用适中的参数
+                        n_estimators = 400
+                        min_data_in_leaf = 20
+                        min_data_in_bin = 5
+                        min_child_samples = 20
+                        subsample = 0.9
+                        colsample_bytree = 0.9
+                        max_depth = -1  # 不限制深度
+                        min_gain_to_split = 0.0
+                    else:
+                        # 超大数据集（>=1000）：增加模型复杂度以获得更好性能
+                        n_estimators = 600  # 增加树的数量
+                        min_data_in_leaf = 30  # 稍微增加叶子节点最小样本数，防止过拟合
+                        min_data_in_bin = 5
+                        min_child_samples = 30
+                        subsample = 0.9
+                        colsample_bytree = 0.9
+                        max_depth = -1  # 不限制深度
+                        min_gain_to_split = 0.0
             
             # 彻底抑制LightGBM的警告输出（包括stderr）
             import sys
@@ -520,9 +534,18 @@ def train_gnn(df: pd.DataFrame, target_col: str, config: Dict[str, Any]) -> GNNP
         hidden = config.get("hidden", 64)
         layers = config.get("layers", 3)
         dropout = config.get("dropout", 0.2)
-        batch_size = config.get("batch_size", 32)
-        # 对于较大的数据集，增加训练轮数以提高模型性能
-        epochs = config.get("epochs", 50) if n_samples > 200 else config.get("epochs", 30)
+        # 根据数据集大小调整batch_size和训练轮数
+        if n_samples < 200:
+            batch_size = config.get("batch_size", 32)
+            epochs = config.get("epochs", 30)
+        elif n_samples < 1000:
+            # 中等大数据集（200-1000）：适度增加batch_size和训练轮数
+            batch_size = config.get("batch_size", 32)
+            epochs = config.get("epochs", 50)
+        else:
+            # 大数据集（>=1000）：使用更大的batch_size和更多训练轮数以充分利用数据
+            batch_size = min(config.get("batch_size", 64), 64)  # 最大64，避免内存溢出
+            epochs = config.get("epochs", 80)  # 大数据集使用更多训练轮数
     
     model = GINRegressor(in_dim, hidden=hidden, layers=layers, dropout=dropout).to(device)
     # 根据数据集大小调整学习率
@@ -530,8 +553,11 @@ def train_gnn(df: pd.DataFrame, target_col: str, config: Dict[str, Any]) -> GNNP
         lr = 5e-4  # 小数据集使用较小的学习率
     elif n_samples < 500:
         lr = 1e-3  # 中等数据集使用标准学习率
+    elif n_samples < 1000:
+        lr = config.get("lr", 1e-3)  # 中等大数据集使用配置的学习率
     else:
-        lr = config.get("lr", 1e-3)  # 大数据集使用配置的学习率
+        # 大数据集（>=1000）：可以使用稍小的学习率以获得更稳定的训练
+        lr = config.get("lr", 8e-4)  # 大数据集使用稍小的学习率
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
     dl_tr = DataLoader(train_graphs, batch_size=batch_size, shuffle=True)
     dl_va = DataLoader(val_graphs, batch_size=max(1, min(64, len(val_graphs))))
@@ -913,14 +939,19 @@ def eval_gnn_main(args=None):
     g = build_graph(mol)
     in_dim = g.x.size(-1)
     model_g = GINRegressor(in_dim, hidden=hidden, layers=layers, dropout=dropout).to(device)
+    # 先加载标准化参数（如果存在），确保即使模型文件不存在也能设置默认值
+    if os.path.exists(norm_path):
+        with open(norm_path, "r") as f:
+            norm_data = json.load(f)
+            model_g.target_mean = norm_data.get("mean", 0.0)
+            model_g.target_std = norm_data.get("std", 1.0)
+    else:
+        # 如果没有标准化参数文件，使用默认值（不标准化）
+        model_g.target_mean = 0.0
+        model_g.target_std = 1.0
+    
     if os.path.exists(a.model):
         model_g.load_state_dict(torch.load(a.model, map_location=device), strict=False)
-        # 加载标准化参数
-        if os.path.exists(norm_path):
-            with open(norm_path, "r") as f:
-                norm_data = json.load(f)
-                model_g.target_mean = norm_data.get("mean", 0.0)
-                model_g.target_std = norm_data.get("std", 1.0)
     y_true, y_pred = [], []
     for smi, y in zip(te["smiles"], te[a.target]):
         y_true.append(float(y))
