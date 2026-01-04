@@ -2,7 +2,7 @@
   "name": "molproplab-server",
   "private": true,
   "version": "1.0.0",  "scripts": {
-    "dev": "set PYTHON=D:\\anaconda3\\envs\\molproplab\\python.exe && ts-node-dev --respawn --transpile-only src/index.ts",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.json",
     "test": "jest"
