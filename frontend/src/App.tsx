@@ -178,7 +178,27 @@ const SinglePrediction: React.FC = () => {
   const [model, setModel] = useState<"baseline" | "gnn">("baseline");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [smilesError, setSmilesError] = useState<string | null>(null);
+  // SMILES输入合法性校验
+  function validateSmiles(s: string): string | null { 
+      const t = s.trim();
+      // 空输入
+      if (!t) return "输入的 SMILES 不合法！";
+      // 含空格 / 换行
+      if (/\s/.test(t)) return "输入的 SMILES 不合法！";
+      // 非法字符
+      const allowed = /^[A-Za-z0-9@+\-\[\]\(\)=#$\\/%.:]+$/;
+      if (!allowed.test(t)) return "输入的 SMILES 不合法！";
+      return null; 
+  }
   const handle = async () => {
+    const err = validateSmiles(smiles); // 校验SMILES
+    if (err) {
+      setSmilesError(err);
+      setResult(null); 
+      return;
+    }
+  setSmilesError(null);
     setLoading(true);
     try {
       const { data } = await API.post("/predict", { smiles, model });
@@ -193,7 +213,22 @@ const SinglePrediction: React.FC = () => {
         <div className="grid md:grid-cols-2 gap-4">
           <div>
             <label className="text-sm opacity-80">SMILES 字符串</label>
-            <Textarea rows={5} value={smiles} onChange={(e) => setSmiles(e.target.value)} placeholder="请输入 SMILES 字符串，例如：CCO" />
+            <Textarea
+            rows={5}
+            value={smiles}
+            onChange={(e) => {
+              setSmiles(e.target.value);
+              // 一旦用户重新输入，就清除旧的错误提示
+              if (smilesError) setSmilesError(null);
+              }}
+            placeholder="请输入 SMILES 字符串，例如：CCO"
+            />
+
+{smilesError && (
+  <div className="mt-2 text-sm text-red-600">
+    {smilesError}
+  </div>
+)}
             <div className="flex items-center gap-3 mt-3">
               <label className="text-sm opacity-80">模型</label>
               <select
