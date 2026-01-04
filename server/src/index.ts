@@ -9,7 +9,7 @@ import crypto from "crypto";
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 // 优先使用环境变量，如果没有则使用默认的Conda路径
-const PYTHON = process.env.PYTHON || "D:\\anaconda3\\envs\\molproplab\\python.exe";
+const PYTHON = process.env.PYTHON || (process.env.CONDA_PREFIX ? path.join(process.env.CONDA_PREFIX, "python.exe") : "python");
 const ROOT = path.resolve(__dirname, "../..");
 const ML_DIR = path.join(ROOT, "ml");
 
