@@ -9,7 +9,7 @@ import crypto from "crypto";
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 // 优先使用环境变量，如果没有则使用默认的Conda路径
-const PYTHON = process.env.PYTHON || "D:\\anaconda3\\envs\\molproplab\\python.exe";
+const PYTHON = process.env.PYTHON || (process.env.CONDA_PREFIX ? path.join(process.env.CONDA_PREFIX, "python.exe") : "python");
 const ROOT = path.resolve(__dirname, "../..");
 const ML_DIR = path.join(ROOT, "ml");
 
@@ -66,10 +66,35 @@ type Job = {
 const jobs = new Map<string, Job>();
 
 // 调用Python脚本并返回执行结果
-function callPython(args: string[], onStdout?: (s: string) => void, onStderr?: (s: string) => void): Promise<{ code: number; stdout: string; stderr: string }> {
+function callPython(args: string[], onStdout?: (s: string) => void, onStderr?: (s: string) => void, req?: express.Request, res?: express.Response): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const env = { ...process.env, TORCH_SHM_DISABLE: "1" };
     const p = spawn(PYTHON, args, { cwd: ML_DIR, stdio: ["ignore", "pipe", "pipe"], env });
+    
+    // 前端断开，杀死子进程
+    let killed = false;
+    const killChild = () => {
+      if (killed) return;
+      killed = true;
+
+      if (!p.pid) return;
+      if (process.platform === "win32") {
+        try {
+          spawn("taskkill", ["/pid", String(p.pid), "/T", "/F"]);
+        } catch {}
+      } else {
+        try {
+          p.kill("SIGTERM");
+        } catch {}
+      }
+    };
+    if (req) req.on("aborted", killChild);
+    if (res) {
+      res.on("close", () => {
+        if (!res.writableEnded) killChild();
+      });
+    }; 
+
     let stdout = "";
     let stderr = "";
     p.stdout.on("data", (d) => {
@@ -102,7 +127,8 @@ app.post("/predict", async (req, res) => {
     const { code, stdout, stderr } = await callPython(args, undefined, (s) => {
       // 打印所有stderr输出（包括调试信息）
       console.log(`[Python stderr] ${s.trim()}`);
-    });
+      }, req,res
+    );
     if (code !== 0) {
       console.error(`[predict] Python error (code ${code}):`, stderr);
       return res.status(500).json({ error: "Python error", stderr });
@@ -110,6 +136,7 @@ app.post("/predict", async (req, res) => {
     if (stderr) {
       console.log(`[predict] Python stderr output:`, stderr);
     }
+    console.log("[predict] raw stdout head:", stdout.slice(0, 500));
     const data = JSON.parse(stdout.trim());
     console.log(`[predict] Result model: ${data.model}, prediction: ${data.prediction}`);
     return res.json(data);
