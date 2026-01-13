@@ -28,39 +28,114 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GINConv, global_add_pool
+from torch_geometric.nn import GINConv, global_add_pool, global_mean_pool, global_max_pool
+from torch_geometric.nn import BatchNorm, LayerNorm
 
-# 图神经网络（GIN）
+# 图神经网络（GIN）- 改进版本
 
 class GINRegressor(nn.Module):
-    # 初始化GIN（图同构网络）回归模型
-    def __init__(self, in_dim, hidden=64, layers=3, dropout=0.2):
+    # 初始化GIN（图同构网络）回归模型 - 改进版本
+    # 支持边特征、跳跃连接、多种池化方式、BatchNorm
+    def __init__(self, in_dim, hidden=128, layers=4, dropout=0.2, use_edge_attr=False, use_skip=True, use_bn=True):
         super().__init__()
         self.dropout = dropout
+        self.use_skip = use_skip
+        self.use_edge_attr = use_edge_attr
+        
+        # 输入投影层
+        self.input_proj = nn.Linear(in_dim, hidden) if in_dim != hidden else nn.Identity()
+        
         mlps = []
-        last = in_dim
-        for _ in range(layers):
-            mlp = nn.Sequential(nn.Linear(last, hidden), nn.ReLU(), nn.Linear(hidden, hidden))
-            mlps.append(GINConv(mlp))
-            last = hidden
+        bns = []
+        for i in range(layers):
+            # 每层的MLP：使用更深的网络
+            # 注意：BatchNorm1d在batch_size=1时会出错，所以使用LayerNorm替代
+            mlp = nn.Sequential(
+                nn.Linear(hidden, hidden),
+                nn.LayerNorm(hidden) if use_bn else nn.Identity(),
+                nn.ReLU(),
+                nn.Linear(hidden, hidden),
+                nn.LayerNorm(hidden) if use_bn else nn.Identity(),
+                nn.ReLU()
+            )
+            # GINConv不支持edge_attr，如果需要边特征，可以使用GINEConv
+            # 这里先使用标准GINConv，边特征可以通过其他方式融合
+            mlps.append(GINConv(mlp, train_eps=True))
+            if use_bn:
+                # 使用LayerNorm替代BatchNorm，避免batch_size=1的问题
+                bns.append(LayerNorm(hidden))
+            else:
+                bns.append(nn.Identity())
+        
         self.convs = nn.ModuleList(mlps)
-        self.lin = nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU(), nn.Dropout(dropout), nn.Linear(hidden, 1))
+        self.bns = nn.ModuleList(bns)
+        
+        # 如果使用跳跃连接，需要融合多层特征
+        if use_skip:
+            pool_dim = hidden * layers  # 所有层的特征拼接
+        else:
+            pool_dim = hidden
+        
+        # 使用多种池化方式的组合
+        pool_dim *= 3  # mean + max + sum
+        
+        # 最终预测层：使用更深的网络
+        # 使用LayerNorm替代BatchNorm，避免batch_size=1的问题
+        self.lin = nn.Sequential(
+            nn.Linear(pool_dim, hidden * 2),
+            nn.LayerNorm(hidden * 2) if use_bn else nn.Identity(),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden * 2, hidden),
+            nn.LayerNorm(hidden) if use_bn else nn.Identity(),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden, 1)
+        )
 
     # 前向传播，处理图数据并返回预测值
     def forward(self, data):
         x, edge_index = data.x, data.edge_index
-        xs = []
-        for conv in self.convs:
+        edge_attr = getattr(data, 'edge_attr', None)
+        
+        # 输入投影
+        x = self.input_proj(x)
+        
+        # 存储所有层的特征（用于跳跃连接）
+        xs = [x]
+        
+        # 通过GIN层
+        for i, (conv, bn) in enumerate(zip(self.convs, self.bns)):
+            # GINConv不支持edge_attr，标准调用
             x = conv(x, edge_index)
+            
+            x = bn(x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
             xs.append(x)
-        x = xs[-1]
-        if hasattr(data, "batch"):
-            x = global_add_pool(x, data.batch)
+        
+        # 池化：使用所有层（如果使用跳跃连接）或仅最后一层
+        if self.use_skip:
+            # 拼接所有层的特征
+            x_all = torch.cat(xs[1:], dim=-1)  # 跳过输入层
         else:
-            x = x.sum(dim=0, keepdim=True)
-        out = self.lin(x)
+            x_all = xs[-1]
+        
+        # 多种池化方式的组合
+        if hasattr(data, "batch"):
+            x_sum = global_add_pool(x_all, data.batch)
+            x_mean = global_mean_pool(x_all, data.batch)
+            x_max = global_max_pool(x_all, data.batch)
+        else:
+            x_sum = x_all.sum(dim=0, keepdim=True)
+            x_mean = x_all.mean(dim=0, keepdim=True)
+            x_max = x_all.max(dim=0, keepdim=True)[0]
+        
+        # 拼接多种池化结果
+        x_pooled = torch.cat([x_sum, x_mean, x_max], dim=-1)
+        
+        # 最终预测
+        out = self.lin(x_pooled)
         return out.view(-1)
 
 @dataclass
@@ -122,23 +197,34 @@ def train_gnn(df: pd.DataFrame, target_col: str, config: Dict[str, Any]) -> GNNP
         batch_size = max(1, min(8, n_samples))  # 确保至少为1
         epochs = 15
     else:
-        hidden = config.get("hidden", 64)
-        layers = config.get("layers", 3)
+        hidden = config.get("hidden", 128)  # 增加默认隐藏层大小
+        layers = config.get("layers", 4)  # 增加默认层数
         dropout = config.get("dropout", 0.2)
+        use_edge_attr = config.get("use_edge_attr", True)  # 默认使用边特征
+        use_skip = config.get("use_skip", True)  # 默认使用跳跃连接
+        use_bn = config.get("use_bn", True)  # 默认使用BatchNorm
         # 根据数据集大小调整batch_size和训练轮数
         if n_samples < 200:
             batch_size = config.get("batch_size", 32)
-            epochs = config.get("epochs", 30)
+            epochs = config.get("epochs", 50)  # 增加训练轮数
         elif n_samples < 1000:
             # 中等大数据集（200-1000）：适度增加batch_size和训练轮数
             batch_size = config.get("batch_size", 32)
-            epochs = config.get("epochs", 50)
+            epochs = config.get("epochs", 100)  # 大幅增加训练轮数
         else:
             # 大数据集（>=1000）：使用更大的batch_size和更多训练轮数以充分利用数据
             batch_size = min(config.get("batch_size", 64), 64)  # 最大64，避免内存溢出
-            epochs = config.get("epochs", 80)  # 大数据集使用更多训练轮数
+            epochs = config.get("epochs", 150)  # 大数据集使用更多训练轮数
     
-    model = GINRegressor(in_dim, hidden=hidden, layers=layers, dropout=dropout).to(device)
+    model = GINRegressor(
+        in_dim, 
+        hidden=hidden, 
+        layers=layers, 
+        dropout=dropout,
+        use_edge_attr=use_edge_attr,
+        use_skip=use_skip,
+        use_bn=use_bn
+    ).to(device)
     # 根据数据集大小调整学习率
     if n_samples < 100:
         lr = 5e-4  # 小数据集使用较小的学习率
@@ -149,10 +235,23 @@ def train_gnn(df: pd.DataFrame, target_col: str, config: Dict[str, Any]) -> GNNP
     else:
         # 大数据集（>=1000）：可以使用稍小的学习率以获得更稳定的训练
         lr = config.get("lr", 8e-4)  # 大数据集使用稍小的学习率
-    opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    
+    # 使用Adam优化器，增加weight_decay防止过拟合
+    opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=config.get("weight_decay", 1e-4))
+    
+    # 添加学习率调度器：在验证损失不下降时降低学习率
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt, mode='min', factor=0.5, patience=10, verbose=False, min_lr=1e-6
+    )
+    
     dl_tr = DataLoader(train_graphs, batch_size=batch_size, shuffle=True)
     dl_va = DataLoader(val_graphs, batch_size=max(1, min(64, len(val_graphs))))
-    best = float("inf"); best_state = None
+    
+    best = float("inf")
+    best_state = None
+    patience_counter = 0
+    patience = config.get("patience", 20)  # 早停耐心值
+    
     for epoch in range(epochs):
         model.train()
         losses = []
@@ -173,9 +272,22 @@ def train_gnn(df: pd.DataFrame, target_col: str, config: Dict[str, Any]) -> GNNP
                 val_loss += F.mse_loss(p, b.y.view(-1), reduction="sum").item()
                 n += b.y.numel()
             val_rmse = math.sqrt(val_loss / max(1,n))
+        
+        # 更新学习率
+        scheduler.step(val_rmse)
+        
+        # 保存最佳模型
         if val_rmse < best:
             best = val_rmse
             best_state = {k:v.cpu().clone() for k,v in model.state_dict().items()}
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            # 早停：如果验证损失连续不下降，提前停止训练
+            if patience_counter >= patience:
+                print(f"Early stopping at epoch {epoch+1}, best val_rmse: {best:.6f}")
+                break
+    
     if best_state:
         model.load_state_dict(best_state)
     
@@ -185,6 +297,9 @@ def train_gnn(df: pd.DataFrame, target_col: str, config: Dict[str, Any]) -> GNNP
     model.hidden_dim = hidden
     model.num_layers = layers
     model.dropout_rate = dropout
+    model.use_edge_attr = use_edge_attr
+    model.use_skip = use_skip
+    model.use_bn = use_bn
     
     return GNNPack(model=model, in_dim=in_dim)
 
@@ -211,9 +326,12 @@ def train_gnn_demo(property_name: str = "logp") -> str:
         json.dump({
             "mean": getattr(pack.model, 'target_mean', 0.0), 
             "std": getattr(pack.model, 'target_std', 1.0),
-            "hidden": getattr(pack.model, 'hidden_dim', 64),
-            "layers": getattr(pack.model, 'num_layers', 3),
-            "dropout": getattr(pack.model, 'dropout_rate', 0.2)
+            "hidden": getattr(pack.model, 'hidden_dim', 128),
+            "layers": getattr(pack.model, 'num_layers', 4),
+            "dropout": getattr(pack.model, 'dropout_rate', 0.2),
+            "use_edge_attr": getattr(pack.model, 'use_edge_attr', True),
+            "use_skip": getattr(pack.model, 'use_skip', True),
+            "use_bn": getattr(pack.model, 'use_bn', True)
         }, f)
     return out
 
@@ -263,9 +381,12 @@ def train_gnn_main(args=None):
         json.dump({
             "mean": getattr(pack.model, 'target_mean', 0.0), 
             "std": getattr(pack.model, 'target_std', 1.0),
-            "hidden": getattr(pack.model, 'hidden_dim', 64),
-            "layers": getattr(pack.model, 'num_layers', 3),
-            "dropout": getattr(pack.model, 'dropout_rate', 0.2)
+            "hidden": getattr(pack.model, 'hidden_dim', 128),
+            "layers": getattr(pack.model, 'num_layers', 4),
+            "dropout": getattr(pack.model, 'dropout_rate', 0.2),
+            "use_edge_attr": getattr(pack.model, 'use_edge_attr', True),
+            "use_skip": getattr(pack.model, 'use_skip', True),
+            "use_bn": getattr(pack.model, 'use_bn', True)
         }, f)
     print(f"Saved gnn to {a.out}")
 

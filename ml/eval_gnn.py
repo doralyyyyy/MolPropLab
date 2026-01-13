@@ -42,10 +42,18 @@ def gnn_predict_atom_importance(pack: GNNPack, smiles: str) -> Dict[str, Any]:
     T = 20
     preds_normalized = []
     for _ in range(T):
-        pack.model.train()  # 启用dropout以进行不确定性估计
+        # 临时启用dropout以进行不确定性估计，但保持eval模式避免BatchNorm问题
+        # 手动设置dropout层为训练模式
+        for module in pack.model.modules():
+            if isinstance(module, torch.nn.Dropout):
+                module.train()
         with torch.no_grad():
             p = pack.model(g.to(device)).item()
             preds_normalized.append(p)
+        # 恢复dropout为eval模式
+        for module in pack.model.modules():
+            if isinstance(module, torch.nn.Dropout):
+                module.eval()
     
     # 计算标准化空间的不确定性
     pred_normalized = float(np.mean(preds_normalized))
@@ -89,15 +97,21 @@ def eval_gnn_main(args=None):
     if os.path.exists(norm_path):
         with open(norm_path, "r") as f:
             saved_config = json.load(f)
-        hidden = saved_config.get("hidden", 64)
-        layers = saved_config.get("layers", 3)
+        hidden = saved_config.get("hidden", 128)
+        layers = saved_config.get("layers", 4)
         dropout = saved_config.get("dropout", 0.2)
+        use_edge_attr = saved_config.get("use_edge_attr", False)
+        use_skip = saved_config.get("use_skip", True)
+        use_bn = saved_config.get("use_bn", True)
     else:
         with open(a.cfg, "r") as f:
             cfg = yaml.safe_load(f)
-        hidden = cfg.get("hidden", 64)
-        layers = cfg.get("layers", 3)
+        hidden = cfg.get("hidden", 128)
+        layers = cfg.get("layers", 4)
         dropout = cfg.get("dropout", 0.2)
+        use_edge_attr = cfg.get("use_edge_attr", False)
+        use_skip = cfg.get("use_skip", True)
+        use_bn = cfg.get("use_bn", True)
     
     # 使用scaffold_split进行数据集划分（与训练时一致）
     train_df, val_df, test_df = scaffold_split(df, frac=(0.7, 0.15, 0.15), seed=42)
@@ -106,7 +120,15 @@ def eval_gnn_main(args=None):
     _, mol = sanitize_smiles(test_df.iloc[0]["smiles"])
     g = build_graph(mol)
     in_dim = g.x.size(-1)
-    model_g = GINRegressor(in_dim, hidden=hidden, layers=layers, dropout=dropout).to(device)
+    model_g = GINRegressor(
+        in_dim, 
+        hidden=hidden, 
+        layers=layers, 
+        dropout=dropout,
+        use_edge_attr=use_edge_attr,
+        use_skip=use_skip,
+        use_bn=use_bn
+    ).to(device)
     # 先加载标准化参数（如果存在），确保即使模型文件不存在也能设置默认值
     if os.path.exists(norm_path):
         with open(norm_path, "r") as f:
@@ -119,7 +141,15 @@ def eval_gnn_main(args=None):
         model_g.target_std = 1.0
     
     if os.path.exists(a.model):
-        model_g.load_state_dict(torch.load(a.model, map_location=device), strict=False)
+        # 尝试加载模型权重，如果架构不匹配则给出提示
+        try:
+            state_dict = torch.load(a.model, map_location=device)
+            model_g.load_state_dict(state_dict, strict=False)
+        except Exception as e:
+            print(json.dumps({
+                "error": f"Model architecture mismatch. Please retrain the model with the new architecture. Original error: {str(e)}"
+            }, indent=2))
+            return
     
     # 在测试集上评估
     y_true, y_pred = [], []

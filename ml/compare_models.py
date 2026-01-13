@@ -83,21 +83,35 @@ def compare_models(property_name: str = "logp", output_file: str = None) -> Dict
                 if os.path.exists(norm_path):
                     with open(norm_path, "r") as f:
                         saved_config = json.load(f)
-                    hidden = saved_config.get("hidden", 64)
-                    layers = saved_config.get("layers", 3)
+                    hidden = saved_config.get("hidden", 128)
+                    layers = saved_config.get("layers", 4)
                     dropout = saved_config.get("dropout", 0.2)
+                    use_edge_attr = saved_config.get("use_edge_attr", False)
+                    use_skip = saved_config.get("use_skip", True)
+                    use_bn = saved_config.get("use_bn", True)
                 else:
                     with open(os.path.join(ROOT, "configs", "gnn.yaml"), "r") as f:
                         cfg = yaml.safe_load(f)
-                    hidden = cfg.get("hidden", 64)
-                    layers = cfg.get("layers", 3)
+                    hidden = cfg.get("hidden", 128)
+                    layers = cfg.get("layers", 4)
                     dropout = cfg.get("dropout", 0.2)
+                    use_edge_attr = cfg.get("use_edge_attr", False)
+                    use_skip = cfg.get("use_skip", True)
+                    use_bn = cfg.get("use_bn", True)
                 
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 _, mol = sanitize_smiles(test_df.iloc[0]["smiles"])
                 g = build_graph(mol)
                 in_dim = g.x.size(-1)
-                model_g = GINRegressor(in_dim, hidden=hidden, layers=layers, dropout=dropout).to(device)
+                model_g = GINRegressor(
+                    in_dim, 
+                    hidden=hidden, 
+                    layers=layers, 
+                    dropout=dropout,
+                    use_edge_attr=use_edge_attr,
+                    use_skip=use_skip,
+                    use_bn=use_bn
+                ).to(device)
                 
                 # 加载标准化参数
                 if os.path.exists(norm_path):
@@ -106,17 +120,27 @@ def compare_models(property_name: str = "logp", output_file: str = None) -> Dict
                         model_g.target_mean = norm_data.get("mean", 0.0)
                         model_g.target_std = norm_data.get("std", 1.0)
                 
-                model_g.load_state_dict(torch.load(gnn_path, map_location=device), strict=False)
-                pack = GNNPack(model_g, in_dim)
-                
-                y_true, y_pred = [], []
-                for smi, y in zip(test_df["smiles"], test_df["target"]):
-                    y_true.append(float(y))
-                    out = gnn_predict_atom_importance(pack, smi)
-                    y_pred.append(out["prediction"])
-                
-                results["gnn"] = calculate_metrics(y_true, y_pred)
-                results["gnn"]["model_path"] = gnn_path
+                # 尝试加载模型权重，如果架构不匹配则给出提示
+                try:
+                    state_dict = torch.load(gnn_path, map_location=device)
+                    model_g.load_state_dict(state_dict, strict=False)
+                except Exception as e:
+                    # 如果加载失败，可能是旧模型架构，提示需要重新训练
+                    results["gnn"] = {
+                        "error": f"Model architecture mismatch. Please retrain the model with the new architecture. Original error: {str(e)}"
+                    }
+                else:
+                    # 只有在模型加载成功时才继续评估
+                    pack = GNNPack(model_g, in_dim)
+                    
+                    y_true, y_pred = [], []
+                    for smi, y in zip(test_df["smiles"], test_df["target"]):
+                        y_true.append(float(y))
+                        out = gnn_predict_atom_importance(pack, smi)
+                        y_pred.append(out["prediction"])
+                    
+                    results["gnn"] = calculate_metrics(y_true, y_pred)
+                    results["gnn"]["model_path"] = gnn_path
             except Exception as e:
                 results["gnn"] = {"error": str(e)}
         else:

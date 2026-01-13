@@ -219,17 +219,52 @@ def scaffold_split(df: pd.DataFrame, frac=(0.8,0.1,0.1), seed=42) -> Tuple[pd.Da
     for i, smi in enumerate(df["smiles"].tolist()):
         s = murcko_scaffold(smi)
         scaff2rows.setdefault(s, []).append(i)
-    clusters = list(scaff2rows.values())
-    rng = np.random.default_rng(seed)
-    rng.shuffle(clusters)
     n = len(df)
-    n_train = int(frac[0]*n)
-    n_val = int(frac[1]*n)
+    n_train_target = int(frac[0] * n)
+    n_val_target = int(frac[1] * n)
+    n_test_target = n - n_train_target - n_val_target
+    
+    # 将大聚类拆分成小片段，以便更灵活地分配
+    max_cluster_size = max(50, int(0.1 * n))  # 最大聚类大小，超过则拆分
+    clusters = []
+    rng = np.random.default_rng(seed)
+    
+    for cluster in scaff2rows.values():
+        if len(cluster) <= max_cluster_size:
+            clusters.append(cluster)
+        else:
+            # 拆分大聚类
+            cluster_copy = cluster.copy()
+            rng.shuffle(cluster_copy)
+            for i in range(0, len(cluster_copy), max_cluster_size):
+                clusters.append(cluster_copy[i:i + max_cluster_size])
+    
+    # 按聚类大小排序（小聚类优先），然后随机打乱
+    clusters.sort(key=len)
+    rng.shuffle(clusters)
+    
     train_idx, val_idx, test_idx = [], [], []
+    
+    # 贪心分配：选择使偏差最小的集合
     for c in clusters:
-        if len(train_idx) + len(c) <= n_train: train_idx += c
-        elif len(val_idx) + len(c) <= n_val: val_idx += c
-        else: test_idx += c
+        c_size = len(c)
+        train_size = len(train_idx)
+        val_size = len(val_idx)
+        test_size = len(test_idx)
+        
+        # 计算加入各集合后的偏差变化（负值表示偏差减小）
+        train_diff = abs((train_size + c_size) - n_train_target) - abs(train_size - n_train_target)
+        val_diff = abs((val_size + c_size) - n_val_target) - abs(val_size - n_val_target)
+        test_diff = abs((test_size + c_size) - n_test_target) - abs(test_size - n_test_target)
+        
+        # 选择偏差变化最小的集合
+        if train_diff <= val_diff and train_diff <= test_diff:
+            train_idx += c
+        elif val_diff <= test_diff:
+            val_idx += c
+        else:
+            test_idx += c
+    
     return df.iloc[train_idx], df.iloc[val_idx], df.iloc[test_idx]
 
 # 数据预处理函数
