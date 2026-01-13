@@ -18,11 +18,27 @@
 
 ## 2. 环境要求
 
-- **Python**：建议 3.10 或 3.11
-- **Node.js**：建议 20.19.5
+### 系统环境
+
+- **操作系统**：Windows 10/11, macOS, Linux
+- **CPU**：支持 64 位架构
+- **内存**：至少 4 GB
+- **GPU**（可选）：支持 CUDA 的 NVIDIA GPU
+  - **GPU 型号**：支持 CUDA 的 NVIDIA GPU
+  - **CUDA 版本**：建议 CUDA 11.8 或 12.1
+  - **驱动版本**：建议 450.80.02 或更高版本
+
+### Python 环境
+
+- **Python 版本**：建议 3.10 或 3.11
+- **包管理**：推荐使用 Conda 来安装 RDKit（Windows 上不推荐直接用 pip）
+- **主要依赖库版本**：见 `requirements.txt`
+
+### Node.js 环境
+
+- **Node.js 版本**：建议 20.19.5
   - 前往 [Node.js 官网](https://nodejs.org/) 下载并安装 **Node.js 20.19.5**
   - 或直接下载压缩包：[Node.js v20.19.5](https://nodejs.org/dist/v20.19.5/)，解压后将 `node.exe` 所在文件夹的路径添加到系统环境变量中
-- **推荐**：使用 Conda 来安装 RDKit（Windows 上不推荐直接用 pip）
 
 ---
 
@@ -191,12 +207,29 @@ python train_gnn.py
 ### 评估模型
 
 ```bash
-# 评估基线模型
+# 评估基线模型（计算 RMSE、MAE、R2、MAPE 等多种指标）
 python eval_baseline.py
 
-# 评估 GNN 模型
+# 评估 GNN 模型（计算 RMSE、MAE、R2、MAPE 等多种指标）
 python eval_gnn.py
 ```
+
+> **注意**：评估脚本使用 scaffold_split 进行数据集划分，与训练时保持一致，确保评估结果的可靠性。
+
+### 模型比较
+
+```bash
+# 比较单个性质的 Baseline 和 GNN 模型
+python compare_models.py --property logp --output comparison_logp.json
+
+# 比较所有性质的模型表现
+python compare_models.py --output comparisons/
+```
+
+比较脚本会生成详细的性能报告，包括：
+- RMSE、MAE、R2、MAPE、相关系数等指标
+- 模型改进百分比
+- 哪个模型在哪个性质上表现更好
 
 ### 推理
 
@@ -214,118 +247,7 @@ python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
 
 ---
 
-## 7. API 说明
-
-### `POST /predict`
-
-单条预测端口，返回所有性质的预测结果。
-
-**请求：**
-
-```json
-{
-  "smiles": "CCO",
-  "model": "baseline" | "gnn"
-}
-```
-
-**返回：**
-
-```json
-{
-  "properties": {
-    "molecular_weight": {
-      "name": "分子量 (MW)",
-      "unit": "g/mol",
-      "prediction": 46.07,
-      "uncertainty": 0.5
-    },
-    "logp": {
-      "name": "LogP (脂溶性)",
-      "unit": "",
-      "prediction": 0.3476,
-      "uncertainty": 0.0117
-    },
-    "logs": {
-      "name": "LogS (水溶解度)",
-      "unit": "log(mol/L)",
-      "prediction": -0.1301,
-      "uncertainty": 0.0474
-    },
-    "pka": {
-      "name": "pKa",
-      "unit": "",
-      "prediction": 15.9,
-      "uncertainty": 0.5
-    },
-    "boiling_point": {
-      "name": "沸点",
-      "unit": "°C",
-      "prediction": 78.4,
-      "uncertainty": 3.0866
-    },
-    // ... 其他性质（熔点、折射率、蒸气压、密度、闪点）
-  },
-  "atom_importances": [0.0, 0.5, 1.0, ...],
-  "sdf": "...",
-  "model": "baseline",
-  "version": "v1"
-}
-```
-
-### `POST /batch_predict`
-
-批量预测端口，支持 CSV 和 XLSX 文件。
-
-**请求：** 上传表单（`multipart/form-data`），字段：
-- `file`：CSV 或 XLSX 文件（需包含 `smiles` 列）
-- `model`：模型类型（`baseline` 或 `gnn`，可选，默认为 `gnn`）
-
-**返回：**
-
-```json
-{
-  "jobId": "xxxx-xxxx-xxxx"
-}
-```
-
-**轮询进度：** `GET /job/:id`
-
-**下载结果：** `GET /job/:id/download`（CSV 文件，包含所有性质的预测列）
-
-### 其他 API
-
-- `GET /models` → 模型注册表 & 基本指标
-- `POST /explain` → 与 `/predict` 类似，但强调解释性输出
-- `GET /health` → 健康检查 `{ ok: true }`
-
----
-
-## 8. 前端说明
-
-- **React + Vite + Tailwind**
-- **shadcn 风格组件**：压缩在单文件 `src/ui.tsx`
-- **3Dmol.js**：通过 CDN 加载
-- 3D 结构由后端 RDKit 生成 SDF（字符串），前端按原子重要性热度上色
-
----
-
-## 9. 依赖说明
-
-### Python 依赖
-
-- **RDKit**：推荐使用 Conda 安装 `conda install -c conda-forge rdkit`，Windows 上不推荐直接用 pip
-- **PyTorch**：当前使用 2.3.1 版本（CPU），在 Windows 上更稳定。若遇到 DLL 加载问题，请确保已安装 Visual C++ Redistributable
-- **NumPy**：使用 1.x 版本（<2.0）以确保与 PyTorch 2.3.1 兼容
-- **PyTorch Geometric**：在部分系统安装较麻烦；若安装失败，系统将**自动降级到基线模型**
-
-### Node.js 依赖
-
-见 `server/package.json` 和 `frontend/package.json`
-
----
-
-## 10. 常见问题与故障排除
+## 7. 常见问题与故障排除
 
 ### 1. RDKit 安装失败
 
@@ -391,7 +313,27 @@ python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
 
 ---
 
-## 11. 模型说明
+## 8. 模型说明
+
+### 数据预处理
+
+系统在训练和评估前会自动进行数据预处理：
+
+1. **缺失值处理**：自动移除 SMILES 或目标值为空的样本
+2. **异常值处理**：使用 IQR（四分位距）方法检测并移除异常值
+   - 移除超出 Q1-1.5×IQR 到 Q3+1.5×IQR 范围的值
+   - 仅当样本数 > 10 时进行异常值检测，避免小数据集过度过滤
+3. **特征归一化**：
+   - Baseline 模型：对输入特征（描述符 + ECFP）进行 Z-score 归一化
+   - GNN 模型：对目标值进行标准化（使用训练集的均值和标准差）
+
+### 数据集划分
+
+- **方法**：使用 scaffold_split（基于分子骨架的划分）
+  - 确保相同骨架的分子在同一集合中，避免数据泄露
+  - 默认比例：训练集 70%，验证集 15%，测试集 15%
+  - 训练时：使用训练集和验证集（80% / 20%）
+  - 评估时：使用测试集进行评估
 
 ### 多性质预测
 
@@ -414,8 +356,12 @@ python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
 
 - **算法**：LightGBM（优先）或 RandomForest（降级）
 - **特征**：分子描述符 + ECFP（1024 位）
-- **不确定性**：集成模型的标准差
+  - 特征归一化：使用 Z-score 归一化（基于训练集的均值和标准差）
+- **不确定性**：集成模型的标准差（3 个模型的集成）
 - **可解释性**：SHAP 值映射到原子重要性
+- **过拟合防止**：
+  - 根据数据集大小动态调整模型参数（树深度、叶子节点最小样本数等）
+  - 使用 subsample 和 colsample_bytree 进行特征和样本采样
 - **适用场景**：快速预测、小到中等数据集、无需 GPU
 - **数据要求**：每个性质至少需要 20+ 样本，推荐 100+ 样本以获得更好性能
 
@@ -423,17 +369,34 @@ python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
 
 - **算法**：GIN（Graph Isomorphism Network）
 - **特征**：图神经网络，直接学习分子图结构
-- **不确定性**：MC-Dropout（Monte Carlo Dropout）
+  - 目标值标准化：使用训练集的均值和标准差进行标准化
+- **不确定性**：MC-Dropout（Monte Carlo Dropout，20 次采样）
 - **可解释性**：梯度显著性映射到原子重要性
+- **过拟合防止**：
+  - Dropout 正则化（根据数据集大小调整 dropout 率）
+  - 早停机制（基于验证集 RMSE）
+  - 根据数据集大小自动调整模型复杂度（隐藏层大小、层数、训练轮数）
 - **适用场景**：大数据集（推荐 500+ 样本）、需要学习复杂分子模式、有 GPU 更佳
 - **注意**：
   - 如果 PyTorch/PyTorch Geometric 不可用，会自动降级到 Baseline
   - 对于小数据集（<200 样本），基线模型通常表现更好
   - 系统会根据数据集大小自动调整模型参数（隐藏层大小、训练轮数等）
 
+### 模型评估指标
+
+系统使用多种指标评估模型性能：
+
+- **RMSE**（Root Mean Squared Error）：均方根误差，衡量预测误差的大小
+- **MAE**（Mean Absolute Error）：平均绝对误差，对异常值不敏感
+- **R²**（Coefficient of Determination）：决定系数，衡量模型解释的方差比例
+- **MAPE**（Mean Absolute Percentage Error）：平均绝对百分比误差，便于跨性质比较
+- **相关系数**：预测值与真实值的线性相关性
+
+所有评估指标在测试集上计算，使用 scaffold_split 确保与训练时的数据划分方式一致。
+
 ---
 
-## 12. 测试
+## 9. 测试
 
 ### Python 测试
 
@@ -447,48 +410,3 @@ pytest ml/tests/test_inference.py
 cd server
 npm test
 ```
-
----
-
-## 13. 项目结构（仅展示主要文件）
-
-```
-MolPropLab/
-├── ml/                    # Python ML 代码
-│   ├── core.py           # 核心 ML 功能（模型、特征提取、多性质预测等）
-│   ├── inference.py      # CLI 推理接口
-│   ├── train_baseline.py # 训练所有性质的基线模型
-│   ├── train_gnn.py      # 训练所有性质的 GNN 模型
-│   ├── eval_baseline.py  # 评估基线模型
-│   ├── eval_gnn.py      # 评估 GNN 模型
-│   ├── data/            # 数据目录（包含各性质的CSV文件）
-│   │   ├── molecular_weight.csv
-│   │   ├── logp.csv
-│   │   ├── logs.csv
-│   │   ├── pka.csv
-│   │   ├── boiling_point.csv
-│   │   ├── melting_point.csv
-│   │   ├── refractive_index.csv
-│   │   ├── vapor_pressure.csv
-│   │   ├── density.csv
-│   │   └── flash_point.csv
-│   └── saved_models/    # 保存的模型（每个性质一个模型文件）
-├── server/              # Node.js 后端
-│   ├── src/
-│   │   └── index.ts     # Express 服务器
-│   └── package.json
-├── frontend/            # React 前端
-│   ├── src/
-│   │   ├── App.tsx      # 主应用组件
-│   │   └── ui.tsx       # UI 组件
-│   └── package.json
-└── requirements.txt     # Python 依赖
-```
-
----
-
-## 14. 许可证
-
-MIT
-
-详见仓库内 `LICENSE` 文件。
