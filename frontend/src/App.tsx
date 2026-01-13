@@ -178,22 +178,102 @@ const SinglePrediction: React.FC = () => {
   const [model, setModel] = useState<"baseline" | "gnn">("baseline");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [smilesError, setSmilesError] = useState<string | null>(null);
+  const [netError, setNetError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  // SMILES输入合法性校验
+  function validateSmiles(s: string): string | null {
+    const t = s.trim();
+    // 空输入
+    if (!t) return "输入的 SMILES 不合法！";
+    // 含空格 / 换行
+    if (/\s/.test(t)) return "输入的 SMILES 不合法！";
+    // 非法字符
+    const allowed = /^[A-Za-z0-9@+\-\[\]\(\)=#$\\/%.:]+$/;
+    if (!allowed.test(t)) return "输入的 SMILES 不合法！";
+    return null;
+  }
   const handle = async () => {
+    if (loading) return;
+
+    // 校验 SMILES
+    const err = validateSmiles(smiles);
+    if (err) {
+      setSmilesError(err);
+      return;
+    }
+    setSmilesError(null);
+    setNetError(null);
+
+    // 取消预测
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
+
+    console.log("[ui] predict start", { smiles, model });
+
     try {
-      const { data } = await API.post("/predict", { smiles, model });
+      const { data } = await API.post(
+        "/predict",
+        { smiles, model },
+        {
+          signal: controller.signal,
+          timeout: 0,
+        }
+      );
+
+      console.log("[ui] predict success, keys=", Object.keys(data || {}));
       setResult(data);
+    } catch (e: any) {
+      const isCanceled =
+        e?.code === "ERR_CANCELED" ||
+        e?.name === "CanceledError" ||
+        e?.name === "AbortError";
+
+      if (isCanceled) {
+        console.log("[ui] predict canceled");
+        return;
+      }
+
+      if (e?.code === "ECONNABORTED") {
+        setNetError("请求超时：后端未及时返回结果。");
+      } else {
+        setNetError(e?.message || "请求失败");
+      }
+      console.error("[ui] predict error:", e);
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setLoading(false);
+        console.log("[ui] predict end");
+      }
     }
   };
+
   return (
     <Layout>
       <Card>
         <div className="grid md:grid-cols-2 gap-4">
           <div>
             <label className="text-sm opacity-80">SMILES 字符串</label>
-            <Textarea rows={5} value={smiles} onChange={(e) => setSmiles(e.target.value)} placeholder="请输入 SMILES 字符串，例如：CCO" />
+            <Textarea
+              rows={5}
+              value={smiles}
+              onChange={(e) => {
+                setSmiles(e.target.value);
+                // 一旦用户重新输入，就清除旧的错误提示
+                if (smilesError) setSmilesError(null);
+              }}
+              placeholder="请输入 SMILES 字符串，例如：CCO"
+            />
+
+            {smilesError && (
+              <div className="mt-2 text-sm text-red-600">
+                {smilesError}
+              </div>
+            )}
             <div className="flex items-center gap-3 mt-3">
               <label className="text-sm opacity-80">模型</label>
               <select
@@ -207,6 +287,19 @@ const SinglePrediction: React.FC = () => {
               <Button onClick={handle} disabled={loading} className="flex items-center gap-2">
                 <FiSearch /> {loading ? "预测中..." : "预测"}
               </Button>
+              {loading && (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    abortRef.current?.abort();
+                    setNetError("已取消本次预测。");
+                  }}
+                  className="bg-red-400 hover:bg-red-500 text-white"
+                >
+                  取消
+                </Button>
+              )}
+
             </div>
             {result && (
               <div className="mt-4">
@@ -283,6 +376,7 @@ const BatchPrediction: React.FC = () => {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
+  
 
   useEffect(() => {
     if (!jobId) return;
