@@ -1,1 +1,0 @@
-{"mean": 6.900013243437566, "std": 0.9237906185057929, "hidden": 128, "layers": 4, "dropout": 0.2, "use_edge_attr": true, "use_skip": true, "use_bn": true}

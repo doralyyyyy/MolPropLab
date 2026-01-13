@@ -15,6 +15,7 @@ __pycache__/
 # Models & outputs
 ml/saved_models/*.pkl
 ml/saved_models/*.pth
+ml/saved_models/*_norm.json
 ml/logs/*
 !ml/logs/.gitkeep
 ml/saved_models/registry.json
