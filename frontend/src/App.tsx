@@ -138,8 +138,8 @@ const Home: React.FC = () => {
   const items = [
     { title: "单条预测", href: "/predict", desc: "输入 SMILES → 获取性质预测、不确定性和原子级热力图", icon: FiSearch },
     { title: "批量预测", href: "/batch", desc: "上传 CSV/XLSX，跟踪任务进度，下载预测结果", icon: FiUpload },
-    { title: "模型浏览", href: "/models", desc: "查看模型版本和性能指标", icon: FiDatabase },
-    { title: "解释性分析", href: "/explain", desc: "查看残差和校准曲线", icon: FiBarChart2 }
+    { title: "模型浏览", href: "/models", desc: "查看所有性质的模型评估结果和性能对比", icon: FiDatabase },
+    { title: "解释性分析", href: "/explain", desc: "查看 Baseline 和 GNN 模型的性能对比图表", icon: FiBarChart2 }
   ];
   return (
     <Layout>
@@ -301,11 +301,10 @@ const SinglePrediction: React.FC = () => {
               )}
 
             </div>
-            {result && (
+                {result && (
               <div className="mt-4">
                 <div className="flex flex-wrap items-center gap-2 mb-4">
                   <Badge>模型: {result.model === "baseline" ? "基线" : "GNN"}</Badge>
-                  <Badge>版本: {result.version}</Badge>
                 </div>
                 {result.properties ? (
                   <div className="space-y-2">
@@ -554,69 +553,151 @@ const BatchPrediction: React.FC = () => {
   );
 };
 
-// 模型浏览器组件，显示已注册的模型信息
+// 模型浏览器组件，显示所有性质的评估信息
 const ModelExplorer: React.FC = () => {
-  const { data } = useSWR("/models", fetcher);
-  const models = data?.models || [];
-  const columns = ["名称", "版本", "类型", "指标"];
-  const rows = models.map((m: any) => [
-    m.name, 
-    m.version, 
-    m.type === "baseline" ? "基线模型" : m.type === "gnn" ? "图神经网络" : m.type,
-    JSON.stringify(m.metrics)
-  ]);
+  const { data, error } = useSWR("/models", fetcher);
+  const properties = data?.properties || [];
+  
+  const columns = ["性质", "Baseline RMSE", "Baseline R²", "GNN RMSE", "GNN R²", "更好模型"];
+  const rows = properties.map((p: any) => {
+    const baseline = p.baseline || {};
+    const gnn = p.gnn || {};
+    const hasBaseline = !baseline.error && baseline.rmse !== undefined;
+    const hasGNN = !gnn.error && gnn.rmse !== undefined;
+    
+    return [
+      p.property_name || p.property,
+      hasBaseline ? Number(baseline.rmse).toFixed(4) : "未评估",
+      hasBaseline ? Number(baseline.r2).toFixed(4) : "-",
+      hasGNN ? Number(gnn.rmse).toFixed(4) : "未评估",
+      hasGNN ? Number(gnn.r2).toFixed(4) : "-",
+      p.better_model === "baseline" ? "Baseline" : p.better_model === "gnn" ? "GNN" : "-"
+    ];
+  });
+  
+  const hasEvaluated = properties.some((p: any) => 
+    (!p.baseline?.error && p.baseline?.rmse !== undefined) || 
+    (!p.gnn?.error && p.gnn?.rmse !== undefined)
+  );
+  
   return (
     <Layout>
       <Card>
         <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-          <FiDatabase /> 模型列表
+          <FiDatabase /> 模型评估结果
         </h3>
-        {models.length === 0 ? (
-          <p className="text-muted text-sm">暂无模型数据</p>
+        {error ? (
+          <div className="text-red-600 text-sm">加载失败: {error.message}</div>
+        ) : !hasEvaluated ? (
+          <div className="space-y-3">
+            <p className="text-muted text-sm">
+              暂无模型评估数据。请先训练和评估模型。
+            </p>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="text-sm font-medium text-blue-800 mb-2">如何生成评估数据：</p>
+              <ol className="text-xs text-blue-700 space-y-1 list-decimal list-inside">
+                <li>训练模型：在<code className="bg-blue-100 px-1 rounded">ml</code>目录下运行 <code className="bg-blue-100 px-1 rounded">python train_baseline.py</code> 和 <code className="bg-blue-100 px-1 rounded">python train_gnn.py</code></li>
+                <li>评估模型：在<code className="bg-blue-100 px-1 rounded">ml</code>目录下运行 <code className="bg-blue-100 px-1 rounded">python compare_models.py</code></li>
+                <li>评估结果将自动保存到 <code className="bg-blue-100 px-1 rounded">*_comparison.json</code> 文件</li>
+              </ol>
+            </div>
+          </div>
         ) : (
-          <Table columns={columns} rows={rows} />
+          <div className="overflow-x-auto">
+            <Table columns={columns} rows={rows} />
+            <p className="text-xs text-muted mt-3">
+              共 {properties.length} 个性质，{properties.filter((p: any) => p.better_model).length} 个已评估
+            </p>
+          </div>
         )}
       </Card>
     </Layout>
   );
 };
 
-// 解释性可视化组件，显示模型校准曲线（预测值与真实值）
+// 解释性可视化组件，显示两个模型的性能对比
 const ExplanationViewer: React.FC = () => {
-  const { data } = useSWR("/models", fetcher);
-  const points = (data?.calibration || []).slice(0, 30);
-  const chart = useMemo(() => ({
-    labels: points.map((_: any, i: number) => `${i}`),
-    datasets: [
-      { 
-        label: "Prediction", 
-        data: points.map((p: any) => p.pred), 
-        borderWidth: 2,
-        borderColor: "#3b82f6",
-        backgroundColor: "rgba(59, 130, 246, 0.1)",
-        pointBackgroundColor: "#3b82f6",
-        pointBorderColor: "#3b82f6"
-      },
-      { 
-        label: "True", 
-        data: points.map((p: any) => p.true), 
-        borderWidth: 2,
-        borderColor: "#10b981",
-        backgroundColor: "rgba(16, 185, 129, 0.1)",
-        pointBackgroundColor: "#10b981",
-        pointBorderColor: "#10b981"
-      }
-    ]
-  }), [points]);
+  const { data, error } = useSWR("/models", fetcher);
+  const properties = data?.properties || [];
+  
+  // 准备图表数据：显示所有性质的RMSE对比
+  const evaluatedProperties = properties.filter((p: any) => 
+    (!p.baseline?.error && p.baseline?.rmse !== undefined) || 
+    (!p.gnn?.error && p.gnn?.rmse !== undefined)
+  );
+  
+  const chart = useMemo(() => {
+    if (evaluatedProperties.length === 0) return null;
+    
+    return {
+      labels: evaluatedProperties.map((p: any) => p.property_name || p.property),
+      datasets: [
+        { 
+          label: "Baseline RMSE", 
+          data: evaluatedProperties.map((p: any) => p.baseline?.rmse || null), 
+          borderWidth: 2,
+          borderColor: "#3b82f6",
+          backgroundColor: "rgba(59, 130, 246, 0.1)",
+          pointBackgroundColor: "#3b82f6",
+          pointBorderColor: "#3b82f6"
+        },
+        { 
+          label: "GNN RMSE", 
+          data: evaluatedProperties.map((p: any) => p.gnn?.rmse || null), 
+          borderWidth: 2,
+          borderColor: "#10b981",
+          backgroundColor: "rgba(16, 185, 129, 0.1)",
+          pointBackgroundColor: "#10b981",
+          pointBorderColor: "#10b981"
+        }
+      ]
+    };
+  }, [evaluatedProperties]);
 
   return (
     <Layout>
       <Card>
         <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-          <FiBarChart2 /> 校准曲线（示例）
+          <FiBarChart2 /> 模型性能对比
         </h3>
-        <p className="text-sm text-muted mb-4">此图表比较模型预测值与真实值，用于评估模型的校准质量。</p>
-        {points.length ? <Line data={chart} /> : <p className="text-muted">暂无数据。</p>}
+        {error ? (
+          <div className="text-red-600 text-sm">加载失败: {error.message}</div>
+        ) : evaluatedProperties.length === 0 ? (
+          <div className="space-y-3">
+            <p className="text-muted text-sm">
+              暂无模型评估数据。请先训练和评估模型。
+            </p>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="text-sm font-medium text-blue-800 mb-2">如何生成评估数据：</p>
+              <ol className="text-xs text-blue-700 space-y-1 list-decimal list-inside">
+                <li>训练模型：在<code className="bg-blue-100 px-1 rounded">ml</code>目录下运行 <code className="bg-blue-100 px-1 rounded">python train_baseline.py</code> 和 <code className="bg-blue-100 px-1 rounded">python train_gnn.py</code></li>
+                <li>评估模型：在<code className="bg-blue-100 px-1 rounded">ml</code>目录下运行 <code className="bg-blue-100 px-1 rounded">python compare_models.py</code></li>
+                <li>评估结果将自动保存到 <code className="bg-blue-100 px-1 rounded">*_comparison.json</code> 文件</li>
+              </ol>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <p className="text-sm text-muted mb-4">
+              此图表比较 Baseline 和 GNN 模型在所有性质上的 RMSE（均方根误差），用于评估模型的预测性能。数值越小越好。
+            </p>
+            {chart && <Line data={chart} />}
+            <div className="mt-4 grid md:grid-cols-2 gap-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-sm font-medium text-blue-800 mb-1">Baseline 模型</p>
+                <p className="text-xs text-blue-700">
+                  平均 RMSE: {(evaluatedProperties.reduce((sum: number, p: any) => sum + (p.baseline?.rmse || 0), 0) / evaluatedProperties.filter((p: any) => p.baseline?.rmse).length).toFixed(4)}
+                </p>
+              </div>
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <p className="text-sm font-medium text-green-800 mb-1">GNN 模型</p>
+                <p className="text-xs text-green-700">
+                  平均 RMSE: {(evaluatedProperties.reduce((sum: number, p: any) => sum + (p.gnn?.rmse || 0), 0) / evaluatedProperties.filter((p: any) => p.gnn?.rmse).length).toFixed(4)}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </Card>
     </Layout>
   );

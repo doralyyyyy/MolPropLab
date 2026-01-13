@@ -1,0 +1,27 @@
+{
+  "property": "vapor_pressure",
+  "property_name": "蒸气压",
+  "total_samples": 1729,
+  "train_samples": 1210,
+  "val_samples": 175,
+  "test_samples": 344,
+  "baseline": {
+    "rmse": 150.93036773245694,
+    "mae": 100.91893159976163,
+    "r2": 0.9029356041158657,
+    "mape": 185.6492021660249,
+    "correlation": 0.9590821753203228,
+    "n_samples": 344,
+    "model_path": "C:\\Users\\10179\\Desktop\\MolPropLab\\ml\\saved_models\\baseline_vapor_pressure_v1.pkl"
+  },
+  "gnn": {
+    "rmse": 373.1717846475423,
+    "mae": 239.64431945709464,
+    "r2": 0.4066317633756509,
+    "mape": 467.93423736305624,
+    "correlation": 0.6381279137557205,
+    "n_samples": 344,
+    "model_path": "C:\\Users\\10179\\Desktop\\MolPropLab\\ml\\saved_models\\gnn_vapor_pressure_v1.pth"
+  },
+  "better_model": "baseline"
+}

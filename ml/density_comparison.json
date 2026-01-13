@@ -1,0 +1,27 @@
+{
+  "property": "density",
+  "property_name": "密度",
+  "total_samples": 1994,
+  "train_samples": 1395,
+  "val_samples": 201,
+  "test_samples": 398,
+  "baseline": {
+    "rmse": 0.024065639124525057,
+    "mae": 0.018794336112397315,
+    "r2": 0.8632729472640474,
+    "mape": 2.5611898902870136,
+    "correlation": 0.9332589504077602,
+    "n_samples": 398,
+    "model_path": "C:\\Users\\10179\\Desktop\\MolPropLab\\ml\\saved_models\\baseline_density_v1.pkl"
+  },
+  "gnn": {
+    "rmse": 0.049750122085238394,
+    "mae": 0.03861704855636254,
+    "r2": 0.4156837638312242,
+    "mape": 5.250965286345743,
+    "correlation": 0.6469195255118245,
+    "n_samples": 398,
+    "model_path": "C:\\Users\\10179\\Desktop\\MolPropLab\\ml\\saved_models\\gnn_density_v1.pth"
+  },
+  "better_model": "baseline"
+}

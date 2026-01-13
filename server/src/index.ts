@@ -238,23 +238,51 @@ app.get("/job/:id/download", (req, res) => {
   });
 });
 
-// 获取模型注册表信息的端口
+// 获取模型评估信息的端口
 app.get("/models", async (_req, res) => {
   try {
-    const regPath = path.join(ML_DIR, "saved_models", "registry.json");
-    let registry: any = null;
-    if (fs.existsSync(regPath)) {
-      registry = JSON.parse(fs.readFileSync(regPath, "utf-8"));
-    } else {
-      registry = {
-        models: [
-          { name: "baseline", version: "v1", type: "LightGBM", metrics: { rmse: 0.5, r2: 0.85 } },
-          { name: "gnn", version: "v1", type: "GIN", metrics: { rmse: 0.6, r2: 0.8 } }
-        ],
-        calibration: Array.from({ length: 30 }, (_, i) => ({ pred: Math.sin(i / 5) + 2, true: Math.sin(i / 5 + 0.1) + 2 }))
-      };
+    const mlPath = path.join(ROOT, "ml");
+    const properties = [
+      "molecular_weight", "logp", "logs", "pka", "boiling_point",
+      "melting_point", "refractive_index", "vapor_pressure", "density", "flash_point"
+    ];
+    
+    const propertyNames: Record<string, string> = {
+      "molecular_weight": "分子量 (MW)",
+      "logp": "LogP (脂溶性)",
+      "logs": "LogS (水溶解度)",
+      "pka": "pKa",
+      "boiling_point": "沸点",
+      "melting_point": "熔点",
+      "refractive_index": "折射率",
+      "vapor_pressure": "蒸气压",
+      "density": "密度",
+      "flash_point": "闪点"
+    };
+    
+    const results: any[] = [];
+    
+    // 读取所有性质的比较结果
+    for (const prop of properties) {
+      const comparisonPath = path.join(mlPath, `${prop}_comparison.json`);
+      if (fs.existsSync(comparisonPath)) {
+        try {
+          const comparison = JSON.parse(fs.readFileSync(comparisonPath, "utf-8"));
+          results.push({
+            property: prop,
+            property_name: propertyNames[prop] || prop,
+            baseline: comparison.baseline || {},
+            gnn: comparison.gnn || {},
+            better_model: comparison.better_model || null,
+            test_samples: comparison.test_samples || 0
+          });
+        } catch (e) {
+          // 忽略解析错误
+        }
+      }
     }
-    res.json(registry);
+    
+    res.json({ properties: results });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "Error" });
   }

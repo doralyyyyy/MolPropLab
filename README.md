@@ -220,10 +220,10 @@ python eval_gnn.py
 
 ```bash
 # 比较单个性质的 Baseline 和 GNN 模型
-python compare_models.py --property logp --output comparison_logp.json
+python compare_models.py --property logp
 
 # 比较所有性质的模型表现
-python compare_models.py --output comparisons/
+python compare_models.py
 ```
 
 比较脚本会生成详细的性能报告，包括：

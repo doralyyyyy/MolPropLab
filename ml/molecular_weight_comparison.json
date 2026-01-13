@@ -1,0 +1,27 @@
+{
+  "property": "molecular_weight",
+  "property_name": "分子量 (MW)",
+  "total_samples": 1984,
+  "train_samples": 1389,
+  "val_samples": 199,
+  "test_samples": 396,
+  "baseline": {
+    "rmse": 1.010982932184977,
+    "mae": 0.285873757680605,
+    "r2": 0.9994426716332319,
+    "mape": 0.43983608505418126,
+    "correlation": 0.9997283482295685,
+    "n_samples": 396,
+    "model_path": "C:\\Users\\10179\\Desktop\\MolPropLab\\ml\\saved_models\\baseline_molecular_weight_v1.pkl"
+  },
+  "gnn": {
+    "rmse": 10.35070494951666,
+    "mae": 8.901600288500076,
+    "r2": 0.9415797570284646,
+    "mape": 7.558336308395064,
+    "correlation": 0.9892439427872761,
+    "n_samples": 396,
+    "model_path": "C:\\Users\\10179\\Desktop\\MolPropLab\\ml\\saved_models\\gnn_molecular_weight_v1.pth"
+  },
+  "better_model": "baseline"
+}

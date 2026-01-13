@@ -1,0 +1,27 @@
+{
+  "property": "pka",
+  "property_name": "pKa",
+  "total_samples": 1982,
+  "train_samples": 1386,
+  "val_samples": 391,
+  "test_samples": 205,
+  "baseline": {
+    "rmse": 0.3113729688503678,
+    "mae": 0.2486420244705308,
+    "r2": 0.8528153791779125,
+    "mape": 3.364608126285539,
+    "correlation": 0.9437721825661571,
+    "n_samples": 205,
+    "model_path": "C:\\Users\\10179\\Desktop\\MolPropLab\\ml\\saved_models\\baseline_pka_v1.pkl"
+  },
+  "gnn": {
+    "rmse": 0.7841867282165278,
+    "mae": 0.6125913405417072,
+    "r2": 0.0664456776619875,
+    "mape": 8.155746837130254,
+    "correlation": 0.29943891783306625,
+    "n_samples": 205,
+    "model_path": "C:\\Users\\10179\\Desktop\\MolPropLab\\ml\\saved_models\\gnn_pka_v1.pth"
+  },
+  "better_model": "baseline"
+}

@@ -22,13 +22,12 @@ try:
 except (RuntimeError, ImportError):
     GNN_AVAILABLE = False
 
-def compare_models(property_name: str = "logp", output_file: str = None) -> Dict[str, Any]:
+def compare_models(property_name: str = "logp") -> Dict[str, Any]:
     """
     比较Baseline和GNN模型在指定性质上的表现
     
     参数:
         property_name: 性质名称
-        output_file: 输出文件路径（可选，如果提供则保存结果）
     
     返回:
         包含比较结果的字典
@@ -148,35 +147,27 @@ def compare_models(property_name: str = "logp", output_file: str = None) -> Dict
     else:
         results["gnn"] = {"error": "GNN dependencies not available"}
     
-    # 计算改进百分比（如果两个模型都成功）
+    # 确定更好的模型（如果两个模型都成功）
     if "error" not in results["baseline"] and "error" not in results["gnn"]:
         baseline_rmse = results["baseline"].get("rmse", float('inf'))
         gnn_rmse = results["gnn"].get("rmse", float('inf'))
-        if baseline_rmse > 0:
-            improvement = ((baseline_rmse - gnn_rmse) / baseline_rmse) * 100
-            results["improvement_percent"] = float(improvement)
-            results["better_model"] = "gnn" if improvement > 0 else "baseline"
+        results["better_model"] = "gnn" if gnn_rmse < baseline_rmse else "baseline"
     
-    # 保存结果
-    if output_file:
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
+    # 固定保存结果到 ml 目录
+    output_file = os.path.join(ROOT, f"{property_name}_comparison.json")
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    print(f"评估结果已保存到: {output_file}")
     
     return results
 
-def compare_all_properties(output_dir: str = None) -> Dict[str, Any]:
+def compare_all_properties() -> Dict[str, Any]:
     """
     比较所有性质的模型表现
-    
-    参数:
-        output_dir: 输出目录（可选）
     
     返回:
         包含所有性质比较结果的字典
     """
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-    
     all_results = {}
     summary = {
         "baseline_wins": 0,
@@ -186,8 +177,7 @@ def compare_all_properties(output_dir: str = None) -> Dict[str, Any]:
     
     for prop_key in PROPERTIES.keys():
         print(f"比较 {prop_key} 模型...")
-        output_file = os.path.join(output_dir, f"{prop_key}_comparison.json") if output_dir else None
-        result = compare_models(prop_key, output_file)
+        result = compare_models(prop_key)
         all_results[prop_key] = result
         
         # 更新摘要
@@ -198,15 +188,14 @@ def compare_all_properties(output_dir: str = None) -> Dict[str, Any]:
                 summary["gnn_wins"] += 1
             summary["properties"].append({
                 "property": prop_key,
-                "better_model": result["better_model"],
-                "improvement": result.get("improvement_percent", 0)
+                "better_model": result["better_model"]
             })
     
-    if output_dir:
-        summary_file = os.path.join(output_dir, "comparison_summary.json")
-        with open(summary_file, "w", encoding="utf-8") as f:
-            json.dump({"summary": summary, "details": all_results}, f, indent=2, ensure_ascii=False)
-        print(f"\n比较结果已保存到: {summary_file}")
+    # 固定保存摘要到 ml 目录
+    summary_file = os.path.join(ROOT, "comparison_summary.json")
+    with open(summary_file, "w", encoding="utf-8") as f:
+        json.dump({"summary": summary, "details": all_results}, f, indent=2, ensure_ascii=False)
+    print(f"\n比较摘要已保存到: {summary_file}")
     
     return {"summary": summary, "details": all_results}
 
@@ -214,17 +203,16 @@ if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--property", default=None, help="要比较的性质名称（默认：所有性质）")
-    p.add_argument("--output", default=None, help="输出文件或目录路径")
     a = p.parse_args()
     
     if a.property:
-        result = compare_models(a.property, a.output)
+        result = compare_models(a.property)
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        result = compare_all_properties(a.output)
+        result = compare_all_properties()
         print("\n=== 模型比较摘要 ===")
         print(f"Baseline 更好的性质数: {result['summary']['baseline_wins']}")
         print(f"GNN 更好的性质数: {result['summary']['gnn_wins']}")
         print("\n详细结果:")
         for prop_info in result['summary']['properties']:
-            print(f"  {prop_info['property']}: {prop_info['better_model']} 更好 (改进: {prop_info['improvement']:.2f}%)")
+            print(f"  {prop_info['property']}: {prop_info['better_model']} 更好")

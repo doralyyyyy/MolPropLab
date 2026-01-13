@@ -20,6 +20,8 @@ ml/logs/*
 !ml/logs/.gitkeep
 ml/saved_models/registry.json
 !ml/saved_models/registry.json
+ml/comparison_*.json
+ml/comparison_summary.json
 
 # OS
 .DS_Store

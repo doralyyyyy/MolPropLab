@@ -1,0 +1,27 @@
+{
+  "property": "melting_point",
+  "property_name": "熔点",
+  "total_samples": 1978,
+  "train_samples": 1386,
+  "val_samples": 198,
+  "test_samples": 394,
+  "baseline": {
+    "rmse": 5.32575614736793,
+    "mae": 4.267921621638243,
+    "r2": 0.9707704599863601,
+    "mape": 60.034555586897966,
+    "correlation": 0.9856550546411555,
+    "n_samples": 394,
+    "model_path": "C:\\Users\\10179\\Desktop\\MolPropLab\\ml\\saved_models\\baseline_melting_point_v1.pkl"
+  },
+  "gnn": {
+    "rmse": 11.00701349765559,
+    "mae": 8.793642748876279,
+    "r2": 0.8751471603689488,
+    "mape": 125.52333643035529,
+    "correlation": 0.9404374033403842,
+    "n_samples": 394,
+    "model_path": "C:\\Users\\10179\\Desktop\\MolPropLab\\ml\\saved_models\\gnn_melting_point_v1.pth"
+  },
+  "better_model": "baseline"
+}
