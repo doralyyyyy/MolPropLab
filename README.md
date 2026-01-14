@@ -99,7 +99,7 @@ pip install -r requirements.txt
 ```
 
 > **重要提示**：
-> - 当前使用 **NumPy 1.x**（<2.0），以确保在 Windows 上的稳定性
+> - 当前使用 **NumPy 1.26.4**，以确保在 Windows 上的稳定性
 > - **PyTorch**：默认会安装 CPU 版本，如需 GPU 支持，可单独安装 GPU 版本：
 >   ```bash
 >   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
@@ -266,14 +266,13 @@ python inference.py --csv data/logp.csv --output out.csv --model gnn
 **解决方案**：
 1. 确保已安装 **Visual C++ Redistributable**
    - 下载地址：https://aka.ms/vs/17/release/vc_redist.x64.exe
-2. 当前 `requirements.txt` 已指定 PyTorch >= 2.0
-3. 如果问题仍然存在，可以尝试重新安装：
+2. 如果问题仍然存在，可以尝试重新安装：
    ```bash
    pip uninstall -y torch torchvision torchaudio
    pip install torch==2.3.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
    pip install "numpy<2"
    ```
-4. 代码中已自动设置 `TORCH_SHM_DISABLE=1` 环境变量，帮助避免共享内存相关问题
+3. 代码中已自动设置 `TORCH_SHM_DISABLE=1` 环境变量，帮助避免共享内存相关问题
 
 ### 3. GNN 预测自动回退到 Baseline
 
