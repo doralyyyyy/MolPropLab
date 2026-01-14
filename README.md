@@ -18,19 +18,21 @@
 
 ## 2. 环境要求
 
+> 注：为实验者所用系统环境
+
 ### 系统环境
 
-- **操作系统**：Windows 10/11, macOS, Linux
-- **CPU**：支持 64 位架构
-- **内存**：至少 4 GB
-- **GPU**（可选）：支持 CUDA 的 NVIDIA GPU
-  - **GPU 型号**：支持 CUDA 的 NVIDIA GPU
-  - **CUDA 版本**：建议 CUDA 11.8 或 12.1
-  - **驱动版本**：建议 450.80.02 或更高版本
+- **操作系统**：Windows 11
+- **CPU**：64 位架构，Intel(R)Core(TM)i7-14650HX 处理器，16 核
+- **内存**：16 GB
+- **GPU**：支持 CUDA 的 NVIDIA GPU
+  - **GPU 型号**：NVIDIA GeForce RTX4050 Laptop GPU
+  - **CUDA 版本**：12.7
+  - **驱动版本**：566.24
 
 ### Python 环境
 
-- **Python 版本**：建议 3.10 或 3.11
+- **Python 版本**：3.11.14
 - **包管理**：推荐使用 Conda 来安装 RDKit（Windows 上不推荐直接用 pip）
 - **主要依赖库版本**：见 `requirements.txt`
 
