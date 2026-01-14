@@ -5,7 +5,7 @@
 ## 1. 核心特性
 
 - **多性质预测：** 支持同时预测 10 种分子性质（分子量、LogP、LogS、pKa、沸点、熔点、折射率、蒸气压、密度、闪点）
-- **Python 端 ML：** RDKit 预处理、分子描述符、ECFP（1024）、PyTorch Geometric GIN、LightGBM/RandomForest 基线模型  
+- **Python 端 ML：** RDKit 预处理、分子描述符、ECFP（1024）、PyTorch Geometric PotentialNet/GIN、LightGBM/RandomForest 基线模型  
 - **不确定性估计：** MC-Dropout（GNN）/ 小型集成（Baseline）  
 - **可解释性：** SHAP（基线模型）、梯度显著性（GNN）→ 原子级重要性 JSON  
 - **后端：** Node.js + Express + TypeScript；通过 `child_process.spawn` 调用 Python  
@@ -228,7 +228,6 @@ python compare_models.py
 
 比较脚本会生成详细的性能报告，包括：
 - RMSE、MAE、R2、MAPE、相关系数等指标
-- 模型改进百分比
 - 哪个模型在哪个性质上表现更好
 
 ### 推理
@@ -240,7 +239,7 @@ python inference.py --smiles "CCO" --model gnn --json
 
 # 批量预测（支持CSV和XLSX格式）
 python inference.py --csv data/logp.csv --output out.csv --model baseline
-python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
+python inference.py --csv data/logp.csv --output out.csv --model gnn
 ```
 
 > **注意**：单条预测会返回所有 10 种性质的预测结果。批量预测的输出文件会包含所有性质的列（格式：`{property}_prediction` 和 `{property}_uncertainty`）。
@@ -265,7 +264,7 @@ python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
 **解决方案**：
 1. 确保已安装 **Visual C++ Redistributable**
    - 下载地址：https://aka.ms/vs/17/release/vc_redist.x64.exe
-2. 当前 `requirements.txt` 已指定 PyTorch 2.3.1，这是经过测试的稳定版本
+2. 当前 `requirements.txt` 已指定 PyTorch >= 2.0
 3. 如果问题仍然存在，可以尝试重新安装：
    ```bash
    pip uninstall -y torch torchvision torchaudio
@@ -307,9 +306,8 @@ python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
 **问题**：服务器无法找到 Python 解释器
 
 **解决方案**：
-- 修改 `server/package.json` 中的 `dev` 脚本，设置正确的 `PYTHON` 环境变量
-- 或在启动前设置：`set PYTHON=你的python路径 && npm run dev`
-- 默认路径：`D:\anaconda3\envs\molproplab\python.exe`（Windows）
+- 在启动前设置环境变量：`set PYTHON=你的python路径 && npm run dev`
+- 默认逻辑：优先使用 `PYTHON` 环境变量 → 然后使用 `CONDA_PREFIX/python.exe` → 最后使用系统 `python`
 
 ---
 
@@ -333,8 +331,8 @@ python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
   - 确保相同骨架的分子在同一集合中，避免数据泄露
   - 对大聚类进行拆分，使划分比例更接近目标比例
   - 默认比例：训练集 70%，验证集 15%，测试集 15%
-  - 训练时：使用训练集和验证集（80% / 20%）
-  - 评估时：使用测试集进行评估
+  - 训练时：使用训练集（70%）进行训练，验证集（15%）用于早停
+  - 评估时：使用测试集（15%）进行评估
 
 ### 多性质预测
 
@@ -368,7 +366,7 @@ python inference.py --xlsx data/logp.xlsx --output out.csv --model gnn
 
 ### GNN 模型
 
-- **算法**：GIN（Graph Isomorphism Network）
+- **算法**：PotentialNet（默认）或 GIN（可配置）
 - **特征**：图神经网络，直接学习分子图结构
   - 目标值标准化：使用训练集的均值和标准差进行标准化
 - **不确定性**：MC-Dropout（Monte Carlo Dropout，20 次采样）

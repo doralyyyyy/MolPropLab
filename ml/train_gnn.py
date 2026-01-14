@@ -339,7 +339,7 @@ def train_gnn(df: pd.DataFrame, target_col: str, config: Dict[str, Any]) -> GNNP
     }
     cfg = {**defaults, **(config or {})}
 
-    train_df, val_df, _ = scaffold_split(df, (0.8, 0.2, 0.0), seed=cfg["seed"])
+    train_df, val_df, _ = scaffold_split(df, (0.7, 0.15, 0.15), seed=cfg["seed"])
     graph_cfg = {
         "use_3d": cfg["use_3d"],
         "max_distance": cfg["max_distance"],
