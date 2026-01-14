@@ -14,7 +14,7 @@ import pandas as pd
 from utils import (
     ROOT, SAVE_DIR, PROPERTIES, DESC_LIST,
     sanitize_smiles, featurize_descriptors, featurize_ecfp, mol_to_sdf,
-    ensure_demo_dataset, preprocess_data
+    ensure_demo_dataset, preprocess_data, scaffold_split
 )
 
 try:
@@ -228,7 +228,10 @@ def train_baseline_demo(property_name: str = "logp") -> str:
     df = ensure_demo_dataset(data_file)
     # 数据预处理：处理缺失值和异常值
     df = preprocess_data(df, "target", remove_outliers=True, outlier_method="iqr")
-    bm = BaselineModel(n_models=3, nbits=1024).fit(df, "target")
+    # 使用scaffold_split进行数据划分（与评估时一致，避免数据泄露）
+    train_df, val_df, _ = scaffold_split(df, frac=(0.7, 0.15, 0.15), seed=42)
+    # 只使用训练集进行训练
+    bm = BaselineModel(n_models=3, nbits=1024).fit(train_df, "target")
     out = quick_baseline_weights_path(property_name)
     bm.save(out)
     return out
@@ -266,8 +269,10 @@ def train_baseline_main(args=None):
     df = ensure_demo_dataset(a.data) if not os.path.exists(a.data) else pd.read_csv(a.data)
     # 数据预处理：处理缺失值和异常值
     df = preprocess_data(df, a.target, remove_outliers=True, outlier_method="iqr")
-    print(f"数据预处理后剩余样本数: {len(df)}")
-    bm = BaselineModel(n_models=3).fit(df, a.target)
+    # 使用scaffold_split进行数据划分（与评估时一致，避免数据泄露）
+    train_df, val_df, _ = scaffold_split(df, frac=(0.7, 0.15, 0.15), seed=42)
+    print(f"数据预处理后剩余样本数: {len(df)}, 训练集: {len(train_df)}")
+    bm = BaselineModel(n_models=3).fit(train_df, a.target)
     bm.save(a.out)
     print(f"Saved baseline to {a.out}")
 
