@@ -338,66 +338,56 @@ def murcko_scaffold(smiles: str) -> str:
 
 # 基于分子骨架进行数据集划分，确保相同骨架的分子在同一集合中
 def scaffold_split(df: pd.DataFrame, frac=(0.8,0.1,0.1), seed=42) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Scaffold split with *no scaffold leakage*:
-    - 每个 Murcko scaffold 作为一个整体 cluster 分配到 train/val/test
-    - 不拆分大 cluster（否则同一 scaffold 会跨集合，造成数据泄露）
-    - 使用 seed 控制 scaffold 组的随机顺序，结果可复现
-    """
-    if df is None or len(df) == 0:
-        return df.iloc[0:0], df.iloc[0:0], df.iloc[0:0]
-
     scaff2rows: Dict[str, List[int]] = {}
     for i, smi in enumerate(df["smiles"].tolist()):
         s = murcko_scaffold(smi)
         scaff2rows.setdefault(s, []).append(i)
-
     n = len(df)
     n_train_target = int(frac[0] * n)
     n_val_target = int(frac[1] * n)
     n_test_target = n - n_train_target - n_val_target
-
-    # clusters: list of row-index lists, one per scaffold
-    clusters: List[List[int]] = list(scaff2rows.values())
-
-    # 标准做法：按 cluster size 从大到小排序，减少“单个大簇挤占剩余配额”导致的波动
-    # 同 size 的 cluster 再用 seed 打乱，保证可复现且不过度依赖输入顺序
+    
+    # 将大聚类拆分成小片段，以便更灵活地分配
+    max_cluster_size = max(50, int(0.1 * n))  # 最大聚类大小，超过则拆分
+    clusters = []
     rng = np.random.default_rng(seed)
+    
+    for cluster in scaff2rows.values():
+        if len(cluster) <= max_cluster_size:
+            clusters.append(cluster)
+        else:
+            # 拆分大聚类
+            cluster_copy = cluster.copy()
+            rng.shuffle(cluster_copy)
+            for i in range(0, len(cluster_copy), max_cluster_size):
+                clusters.append(cluster_copy[i:i + max_cluster_size])
+    
+    # 按聚类大小排序（小聚类优先），然后随机打乱
+    clusters.sort(key=len)
     rng.shuffle(clusters)
-    clusters.sort(key=len, reverse=True)
-
-    train_idx: List[int] = []
-    val_idx: List[int] = []
-    test_idx: List[int] = []
-
+    
+    train_idx, val_idx, test_idx = [], [], []
+    
+    # 贪心分配：选择使偏差最小的集合
     for c in clusters:
         c_size = len(c)
-        # 先填 train，再填 val，其余进 test（不拆分 scaffold）
-        if len(train_idx) + c_size <= n_train_target:
-            train_idx.extend(c)
-        elif len(val_idx) + c_size <= n_val_target:
-            val_idx.extend(c)
+        train_size = len(train_idx)
+        val_size = len(val_idx)
+        test_size = len(test_idx)
+        
+        # 计算加入各集合后的偏差变化（负值表示偏差减小）
+        train_diff = abs((train_size + c_size) - n_train_target) - abs(train_size - n_train_target)
+        val_diff = abs((val_size + c_size) - n_val_target) - abs(val_size - n_val_target)
+        test_diff = abs((test_size + c_size) - n_test_target) - abs(test_size - n_test_target)
+        
+        # 选择偏差变化最小的集合
+        if train_diff <= val_diff and train_diff <= test_diff:
+            train_idx += c
+        elif val_diff <= test_diff:
+            val_idx += c
         else:
-            test_idx.extend(c)
-
-    # 若因大簇导致 val/test 过小，做一次“整簇迁移”修正：把 test 中的整簇搬到 val，直到达到目标
-    if len(val_idx) < n_val_target and len(test_idx) > 0:
-        # 以 cluster 为单位重建映射（仅针对 test 内的 scaffold）
-        test_scaff2rows: Dict[str, List[int]] = {}
-        for i in test_idx:
-            s = murcko_scaffold(df.iloc[i]["smiles"])
-            test_scaff2rows.setdefault(s, []).append(i)
-        move_clusters = list(test_scaff2rows.values())
-        rng.shuffle(move_clusters)
-        move_clusters.sort(key=len)  # 优先搬小簇，尽量贴近目标
-        for mc in move_clusters:
-            if len(val_idx) >= n_val_target:
-                break
-            # 从 test_idx 移除该簇，加入 val_idx
-            mc_set = set(mc)
-            test_idx = [i for i in test_idx if i not in mc_set]
-            val_idx.extend(mc)
-
+            test_idx += c
+    
     return df.iloc[train_idx], df.iloc[val_idx], df.iloc[test_idx]
 
 # 数据预处理函数
