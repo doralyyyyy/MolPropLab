@@ -9,7 +9,7 @@
 import sys, json, argparse, os, csv
 from typing import Dict, Any
 
-from utils import ROOT, PROPERTIES, HAS_TORCH, HAS_PYG, sanitize_smiles, build_graph, ensure_demo_dataset
+from utils import ROOT, PROPERTIES, HAS_TORCH, HAS_PYG, sanitize_smiles, build_graph, ensure_demo_dataset, preprocess_data, scaffold_split
 from train_baseline import BaselineModel, quick_baseline_weights_path
 
 # GNN相关导入（可能不可用）
@@ -44,9 +44,12 @@ def predict_property(smiles: str, property_name: str, model: str = "baseline") -
         if os.path.exists(path):
             bm = BaselineModel.load(path)
         else:
-            bm = BaselineModel(n_models=3, nbits=1024)
+            # 回退训练：使用正确的预处理和数据划分，避免数据泄露
             df = ensure_demo_dataset(data_file)
-            bm.fit(df, "target")
+            df = preprocess_data(df, "target", remove_outliers=True, outlier_method="iqr")
+            train_df, _, _ = scaffold_split(df, frac=(0.7, 0.15, 0.15), seed=42)
+            bm = BaselineModel(n_models=3, nbits=1024)
+            bm.fit(train_df, "target")  # 仅使用训练集
             bm.save(path)
         out = bm.predict(smiles, return_shap=True)
         out["model"] = "baseline"
@@ -61,39 +64,35 @@ def predict_property(smiles: str, property_name: str, model: str = "baseline") -
             return {"prediction": float("nan"), "uncertainty": float("nan"), "atom_importances": [], "sdf": "", "model":"gnn","version":version}
         # 读取配置
         norm_path = path.replace(".pth", "_norm.json")
+        # 读取配置（统一默认值与 train_gnn.py 一致）
+        config = {}
         if os.path.exists(norm_path):
             with open(norm_path, "r") as f:
-                saved_config = json.load(f)
-            hidden = saved_config.get("hidden", 64)
-            layers = saved_config.get("layers", 3)
-            dropout = saved_config.get("dropout", 0.2)
-            model_name = saved_config.get("model_name", "potentialnet")
-            K_bond = saved_config.get("K_bond", 3)
-            K_spatial = saved_config.get("K_spatial", 3)
-            num_distance_bins = saved_config.get("num_distance_bins", 4)
-            max_distance = saved_config.get("max_distance", 5.0)
-            use_3d = saved_config.get("use_3d", True)
-            pool = saved_config.get("pool", "sum")
+                config = json.load(f)
         else:
-            # 如果没有保存的配置，使用默认配置
+            # 如果没有保存的配置，使用 gnn.yaml 配置
             with open(os.path.join(ROOT, "configs", "gnn.yaml"), "r") as f:
-                cfg = yaml.safe_load(f)
-            hidden = cfg.get("hidden", 64)
-            layers = cfg.get("layers", 3)
-            dropout = cfg.get("dropout", 0.2)
-            model_name = cfg.get("model_name", "potentialnet")
-            K_bond = cfg.get("K_bond", 3)
-            K_spatial = cfg.get("K_spatial", 3)
-            num_distance_bins = cfg.get("num_distance_bins", 4)
-            max_distance = cfg.get("max_distance", 5.0)
-            use_3d = cfg.get("use_3d", True)
-            pool = cfg.get("pool", "sum")
+                config = yaml.safe_load(f) or {}
+        
+        # 使用与 train_gnn.py 一致的默认值
+        hidden = config.get("hidden", 128)
+        layers = config.get("layers", 4)
+        dropout = config.get("dropout", 0.2)
+        model_name = config.get("model_name", "potentialnet")
+        K_bond = config.get("K_bond", 3)
+        K_spatial = config.get("K_spatial", 3)
+        num_distance_bins = config.get("num_distance_bins", 4)
+        max_distance = config.get("max_distance", 5.0)
+        use_3d = config.get("use_3d", True)
+        pool = config.get("pool", "sum")
+        seed = config.get("seed", 42)
+        
         graph_cfg = {
             "use_3d": use_3d,
             "max_distance": max_distance,
             "num_distance_bins": num_distance_bins,
-            "max_spatial_neighbors": cfg.get("max_spatial_neighbors") if 'cfg' in locals() else saved_config.get("max_spatial_neighbors", None) if 'saved_config' in locals() else None,
-            "seed": cfg.get("seed", 42) if 'cfg' in locals() else saved_config.get("seed", 42) if 'saved_config' in locals() else 42,
+            "max_spatial_neighbors": config.get("max_spatial_neighbors"),
+            "seed": seed,
         }
         g = build_graph(
             mol,
@@ -131,25 +130,27 @@ def predict_property(smiles: str, property_name: str, model: str = "baseline") -
                     model_g.target_mean = norm_data.get("mean", 0.0)
                     model_g.target_std = norm_data.get("std", 1.0)
         else:
+            # 回退训练：添加数据预处理，train_gnn 内部会做 scaffold_split
             df = ensure_demo_dataset(data_file)
+            df = preprocess_data(df, "target", remove_outliers=True, outlier_method="iqr")
             with open(os.path.join(ROOT, "configs", "gnn.yaml"), "r") as f:
-                cfg = yaml.safe_load(f)
+                train_cfg = yaml.safe_load(f)
             from train_gnn import train_gnn
             try:
-                pack = train_gnn(df, "target", cfg)
+                pack = train_gnn(df, "target", train_cfg)
             except RuntimeError as e:
                 # 如果训练失败，回退到baseline
                 return predict_property(smiles, property_name, model="baseline")
             model_g = pack.model
             torch.save(model_g.state_dict(), path)
-            # 保存标准化参数和模型配置
+            # 保存标准化参数和模型配置（使用与 train_gnn.py 一致的默认值）
             norm_path = path.replace(".pth", "_norm.json")
             with open(norm_path, "w") as f:
                 json.dump({
                     "mean": getattr(model_g, 'target_mean', 0.0), 
                     "std": getattr(model_g, 'target_std', 1.0),
-                    "hidden": getattr(model_g, 'hidden_dim', 64),
-                    "layers": getattr(model_g, 'num_layers', 3),
+                    "hidden": getattr(model_g, 'hidden_dim', 128),
+                    "layers": getattr(model_g, 'num_layers', 4),
                     "dropout": getattr(model_g, 'dropout_rate', 0.2),
                     "model_name": getattr(model_g, 'model_name', 'potentialnet'),
                     "K_bond": getattr(model_g, 'K_bond', 3),

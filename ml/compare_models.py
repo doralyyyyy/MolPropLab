@@ -78,47 +78,38 @@ def compare_models(property_name: str = "logp") -> Dict[str, Any]:
         
         if os.path.exists(gnn_path):
             try:
-                # 加载模型配置
+                # 加载模型配置（统一使用 config 变量，简化逻辑）
+                config = {}
                 if os.path.exists(norm_path):
                     with open(norm_path, "r") as f:
-                        saved_config = json.load(f)
-                    hidden = saved_config.get("hidden", 128)
-                    layers = saved_config.get("layers", 4)
-                    dropout = saved_config.get("dropout", 0.2)
-                    use_edge_attr = saved_config.get("use_edge_attr", False)
-                    use_skip = saved_config.get("use_skip", True)
-                    use_bn = saved_config.get("use_bn", True)
-                    model_name = saved_config.get("model_name", "potentialnet")
-                    K_bond = saved_config.get("K_bond", 3)
-                    K_spatial = saved_config.get("K_spatial", 3)
-                    num_distance_bins = saved_config.get("num_distance_bins", 4)
-                    max_distance = saved_config.get("max_distance", 5.0)
-                    use_3d = saved_config.get("use_3d", True)
-                    pool = saved_config.get("pool", "sum")
+                        config = json.load(f)
                 else:
                     with open(os.path.join(ROOT, "configs", "gnn.yaml"), "r") as f:
-                        cfg = yaml.safe_load(f)
-                    hidden = cfg.get("hidden", 128)
-                    layers = cfg.get("layers", 4)
-                    dropout = cfg.get("dropout", 0.2)
-                    use_edge_attr = cfg.get("use_edge_attr", False)
-                    use_skip = cfg.get("use_skip", True)
-                    use_bn = cfg.get("use_bn", True)
-                    model_name = cfg.get("model_name", "potentialnet")
-                    K_bond = cfg.get("K_bond", 3)
-                    K_spatial = cfg.get("K_spatial", 3)
-                    num_distance_bins = cfg.get("num_distance_bins", 4)
-                    max_distance = cfg.get("max_distance", 5.0)
-                    use_3d = cfg.get("use_3d", True)
-                    pool = cfg.get("pool", "sum")
+                        config = yaml.safe_load(f) or {}
+                
+                # 提取配置参数（使用与 train_gnn.py 一致的默认值）
+                hidden = config.get("hidden", 128)
+                layers = config.get("layers", 4)
+                dropout = config.get("dropout", 0.2)
+                use_edge_attr = config.get("use_edge_attr", False)
+                use_skip = config.get("use_skip", True)
+                use_bn = config.get("use_bn", True)
+                model_name = config.get("model_name", "potentialnet")
+                K_bond = config.get("K_bond", 3)
+                K_spatial = config.get("K_spatial", 3)
+                num_distance_bins = config.get("num_distance_bins", 4)
+                max_distance = config.get("max_distance", 5.0)
+                use_3d = config.get("use_3d", True)
+                pool = config.get("pool", "sum")
+                seed = config.get("seed", 42)
                 
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 graph_cfg = {
                     "use_3d": use_3d,
                     "max_distance": max_distance,
                     "num_distance_bins": num_distance_bins,
-                    "max_spatial_neighbors": cfg.get("max_spatial_neighbors") if 'cfg' in locals() else saved_config.get("max_spatial_neighbors", None) if 'saved_config' in locals() else None,
-                    "seed": cfg.get("seed", 42) if 'cfg' in locals() else saved_config.get("seed", 42) if 'saved_config' in locals() else 42,
+                    "max_spatial_neighbors": config.get("max_spatial_neighbors"),
+                    "seed": seed,
                 }
                 _, mol = sanitize_smiles(test_df.iloc[0]["smiles"])
                 g = build_graph(

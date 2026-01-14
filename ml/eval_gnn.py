@@ -140,15 +140,16 @@ def eval_gnn_main(args=None):
         use_3d = cfg.get("use_3d", True)
         pool = cfg.get("pool", "sum")
     
-    # 使用scaffold_split进行数据集划分（与训练时一致）
-    train_df, val_df, test_df = scaffold_split(df, frac=(0.7, 0.15, 0.15), seed=42)
+    # 使用scaffold_split进行数据集划分（与训练时一致，使用配置中的 seed）
+    seed = cfg.get("seed", 42)
+    train_df, val_df, test_df = scaffold_split(df, frac=(0.7, 0.15, 0.15), seed=seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     graph_cfg = {
         "use_3d": use_3d,
         "max_distance": max_distance,
         "num_distance_bins": num_distance_bins,
         "max_spatial_neighbors": cfg.get("max_spatial_neighbors"),
-        "seed": cfg.get("seed", 42),
+        "seed": seed,
     }
     # 构建一个虚拟图以获取特征维度
     _, mol = sanitize_smiles(test_df.iloc[0]["smiles"])
