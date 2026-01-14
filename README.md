@@ -398,15 +398,7 @@ python inference.py --csv data/logp.csv --output out.csv --model gnn
 
 ---
 
-## 9. 测试
-
-### Python 测试
-
-```bash
-pytest ml/tests
-```
-
-### Node.js 测试
+## 9. Node.js 测试
 
 ```bash
 cd server
