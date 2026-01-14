@@ -104,10 +104,12 @@ def eval_gnn_main(args=None):
     df = preprocess_data(df, a.target, remove_outliers=True, outlier_method="iqr")
     
     # 尝试加载保存的模型配置
+    cfg = {}
     norm_path = a.model.replace(".pth", "_norm.json")
     if os.path.exists(norm_path):
         with open(norm_path, "r") as f:
             saved_config = json.load(f)
+        cfg = saved_config
         hidden = saved_config.get("hidden", 128)
         layers = saved_config.get("layers", 4)
         dropout = saved_config.get("dropout", 0.2)
