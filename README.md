@@ -36,6 +36,8 @@
 - **包管理**：推荐使用 Conda 来安装 RDKit（Windows 上不推荐直接用 pip）
 - **主要依赖库版本**：见 `requirements.txt`
 
+> 也可使用项目根目录的 `environment.yml` 一次性创建 Conda 环境
+
 ### Node.js 环境
 
 - **Node.js 版本**：建议 20.19.5
@@ -401,7 +403,7 @@ python inference.py --csv data/logp.csv --output out.csv --model gnn
 ### Python 测试
 
 ```bash
-pytest ml/tests/test_inference.py
+pytest ml/tests
 ```
 
 ### Node.js 测试

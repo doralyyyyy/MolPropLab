@@ -17,10 +17,12 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Tuple
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from rdkit import Chem
 from rdkit.Chem import Crippen, Descriptors, Lipinski
 
@@ -31,6 +33,28 @@ PUBCHEM_PUGVIEW = "https://pubchem.ncbi.nlm.nih.gov/rest/pug_view"
 DATA_DIR = Path(ROOT) / "data"
 CACHE_DIR = DATA_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+def _requests_session() -> requests.Session:
+    """
+    PubChem 会有间歇性 429/5xx，使用 Session + Retry 提升稳定性。
+    """
+    s = requests.Session()
+    retry = Retry(
+        total=5,
+        connect=5,
+        read=5,
+        backoff_factor=0.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=("GET", "POST"),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    s.headers.update({"User-Agent": "MolPropLab/1.0 (data curation)"})
+    return s
+
+_SESSION = _requests_session()
 
 # --- 1) RDKit: MW / LogP ---
 def rdkit_mw_logp(smiles: str):
@@ -72,19 +96,35 @@ def esol_logS(smiles: str):
 
 # --- 3) PubChem helpers ---
 def smiles_to_cid(smiles: str):
-    url = f"{PUBCHEM_PUGREST}/compound/smiles/cids/txt"
-    r = requests.post(url, data={"smiles": smiles}, timeout=30)
-    if r.status_code != 200:
-        return None
-    txt = r.text.strip()
-    m = re.search(r"(\d+)", txt)
-    return int(m.group(1)) if m else None
+    """
+    Resolve first CID for a SMILES via PUG REST.
+    """
+    url = f"{PUBCHEM_PUGREST}/compound/smiles/cids/JSON"
+    try:
+        r = _SESSION.post(url, data={"smiles": smiles}, timeout=30)
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        cids = (((j or {}).get("IdentifierList") or {}).get("CID") or [])
+        return int(cids[0]) if cids else None
+    except Exception:
+        # 回退为txt解析（兼容极端情况）
+        try:
+            url_txt = f"{PUBCHEM_PUGREST}/compound/smiles/cids/txt"
+            r2 = _SESSION.post(url_txt, data={"smiles": smiles}, timeout=30)
+            if r2.status_code != 200:
+                return None
+            txt = r2.text.strip()
+            m = re.search(r"(\d+)", txt)
+            return int(m.group(1)) if m else None
+        except Exception:
+            return None
 
 
 def pugview_heading_json(cid: int, heading: str):
     url = f"{PUBCHEM_PUGVIEW}/data/compound/{cid}/JSON"
     params = {"heading": heading}
-    r = requests.get(url, params=params, timeout=30)
+    r = _SESSION.get(url, params=params, timeout=30)
     if r.status_code != 200:
         return None
     return r.json()
@@ -92,6 +132,162 @@ def pugview_heading_json(cid: int, heading: str):
 
 _num = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
 
+_num_with_unit = re.compile(
+    r"(?P<val>[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(?P<unit>[A-Za-zµμ/%°][A-Za-z0-9µμ/%°\-\s]*?)\b"
+)
+
+def _walk_strings(j: object):
+    if isinstance(j, dict):
+        for v in j.values():
+            yield from _walk_strings(v)
+    elif isinstance(j, list):
+        for it in j:
+            yield from _walk_strings(it)
+    elif isinstance(j, str):
+        yield j
+
+def _unit_normalize(u: str) -> str:
+    u = (u or "").strip()
+    u = u.replace("μ", "u").replace("µ", "u")
+    u = u.replace("°", "deg")
+    u = re.sub(r"\s+", " ", u)
+    return u.lower()
+
+def _convert_temperature(value: float, unit: str) -> Optional[float]:
+    u = _unit_normalize(unit)
+    if u in ("degc", "c", "deg c", "degree celsius", "degrees celsius"):
+        return float(value)
+    if u in ("degf", "f", "deg f", "degree fahrenheit", "degrees fahrenheit"):
+        return (float(value) - 32.0) * 5.0 / 9.0
+    if u in ("k", "kelvin"):
+        return float(value) - 273.15
+    return None
+
+def _convert_pressure(value: float, unit: str) -> Optional[float]:
+    u = _unit_normalize(unit)
+    v = float(value)
+    if u in ("pa",):
+        return v
+    if u in ("kpa",):
+        return v * 1_000.0
+    if u in ("mpa",):
+        return v * 1_000_000.0
+    if u in ("bar",):
+        return v * 100_000.0
+    if u in ("mbar",):
+        return v * 100.0
+    if u in ("atm",):
+        return v * 101_325.0
+    if u in ("mmhg", "mm hg", "torr"):
+        return v * 133.322368
+    if u in ("psi",):
+        return v * 6894.757293168
+    return None
+
+def _convert_density(value: float, unit: str) -> Optional[float]:
+    u = _unit_normalize(unit)
+    v = float(value)
+    # g/cm3 & g/mL 等价
+    if u in ("g/cm3", "g/cm^3", "g cm-3", "g ml-1", "g/ml", "g/mL".lower()):
+        return v
+    if u in ("kg/m3", "kg/m^3", "kg m-3"):
+        return v / 1000.0
+    return None
+
+def _convert_refractive_index(value: float, unit: str) -> Optional[float]:
+    # 通常无量纲（或标注为 "RI" / "nD"）
+    _ = unit
+    return float(value)
+
+def _convert_pka(value: float, unit: str) -> Optional[float]:
+    # pKa 基本无量纲
+    _ = unit
+    return float(value)
+
+def _extract_candidates_from_pugview(j: dict) -> List[Tuple[float, str, str]]:
+    """
+    Extract numeric candidates with light context from PUG-View JSON.
+    Return list of (value, unit, raw_string).
+    """
+    out: List[Tuple[float, str, str]] = []
+    for s in _walk_strings(j):
+        # 优先匹配 "数值 + 单位" 的模式
+        for m in _num_with_unit.finditer(s):
+            try:
+                v = float(m.group("val"))
+            except Exception:
+                continue
+            unit = m.group("unit").strip()
+            out.append((v, unit, s))
+        # 退化：只有数字没有单位，也收集（用于 refractive index / pKa 等）
+        if not _num_with_unit.search(s):
+            m2 = _num.search(s)
+            if m2:
+                try:
+                    v2 = float(m2.group(0))
+                except Exception:
+                    continue
+                out.append((v2, "", s))
+    return out
+
+def _choose_value(property_key: str, candidates: List[Tuple[float, str, str]]) -> Optional[float]:
+    """
+    Choose a stable value from candidates:
+    - 先做单位转换到项目内部标准单位
+    - 多个候选取中位数（降低噪声），并剔除明显不合理值
+    """
+    converters = {
+        "boiling_point": _convert_temperature,
+        "melting_point": _convert_temperature,
+        "flash_point": _convert_temperature,
+        "vapor_pressure": _convert_pressure,
+        "density": _convert_density,
+        "refractive_index": _convert_refractive_index,
+        "pka": _convert_pka,
+    }
+    conv = converters.get(property_key)
+    if conv is None:
+        return None
+
+    vals: List[float] = []
+    for v, unit, raw in candidates:
+        # 过滤明显是“噪声数字”：比如 PubChem JSON 里出现年份、编号等
+        # 这里只做非常轻的限定，避免过拟合到某些格式
+        if property_key in ("boiling_point", "melting_point", "flash_point"):
+            x = conv(v, unit)
+            if x is None:
+                continue
+            # 常见有机物温度范围粗过滤
+            if -200.0 <= x <= 1000.0:
+                vals.append(x)
+        elif property_key == "vapor_pressure":
+            x = conv(v, unit)
+            if x is None:
+                continue
+            if 0.0 <= x <= 1e9:
+                vals.append(x)
+        elif property_key == "density":
+            x = conv(v, unit)
+            if x is None:
+                continue
+            if 0.0 < x < 10.0:
+                vals.append(x)
+        elif property_key == "refractive_index":
+            # 折射率典型范围
+            if 1.0 <= v <= 3.0:
+                vals.append(float(v))
+        elif property_key == "pka":
+            # 常见 pKa 取值范围（宽松）
+            if -5.0 <= v <= 25.0:
+                vals.append(float(v))
+
+    if not vals:
+        return None
+    vals.sort()
+    mid = len(vals) // 2
+    if len(vals) % 2 == 1:
+        return float(vals[mid])
+    return float((vals[mid - 1] + vals[mid]) / 2.0)
 
 def extract_first_number_from_pugview(j: dict):
     if not j:
@@ -162,6 +358,12 @@ def get_property(smiles: str, target: str) -> Optional[float]:
         return None
     heading = PUGVIEW_HEADINGS[target]
     j = pugview_heading_json(cid, heading)
+    # 更稳健：解析“数值+单位”，转换为项目内部统一单位，并在多候选时取中位数
+    cands = _extract_candidates_from_pugview(j or {})
+    chosen = _choose_value(target, cands)
+    if chosen is not None:
+        return float(chosen)
+    # 回退：保底逻辑（旧实现），确保尽量不返回空
     return extract_first_number_from_pugview(j)
 
 
