@@ -14,7 +14,7 @@ from train_baseline import BaselineModel, quick_baseline_weights_path
 
 # GNN相关导入（可能不可用）
 try:
-    from train_gnn import GINRegressor, GNNPack, quick_gnn_weights_path
+    from train_gnn import GINRegressor, PotentialNetRegressor, GNNPack, quick_gnn_weights_path
     from eval_gnn import gnn_predict_atom_importance
     GNN_AVAILABLE = True
 except (RuntimeError, ImportError):
@@ -59,13 +59,7 @@ def predict_property(smiles: str, property_name: str, model: str = "baseline") -
         _, mol = sanitize_smiles(smiles)
         if not mol:
             return {"prediction": float("nan"), "uncertainty": float("nan"), "atom_importances": [], "sdf": "", "model":"gnn","version":version}
-        g = build_graph(mol)
-        if g is None:
-            return predict_property(smiles, property_name, model="baseline")
-        in_dim = g.x.size(-1)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # 尝试加载保存的模型配置
+        # 读取配置
         norm_path = path.replace(".pth", "_norm.json")
         if os.path.exists(norm_path):
             with open(norm_path, "r") as f:
@@ -73,6 +67,13 @@ def predict_property(smiles: str, property_name: str, model: str = "baseline") -
             hidden = saved_config.get("hidden", 64)
             layers = saved_config.get("layers", 3)
             dropout = saved_config.get("dropout", 0.2)
+            model_name = saved_config.get("model_name", "potentialnet")
+            K_bond = saved_config.get("K_bond", 3)
+            K_spatial = saved_config.get("K_spatial", 3)
+            num_distance_bins = saved_config.get("num_distance_bins", 4)
+            max_distance = saved_config.get("max_distance", 5.0)
+            use_3d = saved_config.get("use_3d", True)
+            pool = saved_config.get("pool", "sum")
         else:
             # 如果没有保存的配置，使用默认配置
             with open(os.path.join(ROOT, "configs", "gnn.yaml"), "r") as f:
@@ -80,8 +81,46 @@ def predict_property(smiles: str, property_name: str, model: str = "baseline") -
             hidden = cfg.get("hidden", 64)
             layers = cfg.get("layers", 3)
             dropout = cfg.get("dropout", 0.2)
-        
-        model_g = GINRegressor(in_dim, hidden=hidden, layers=layers, dropout=dropout).to(device)
+            model_name = cfg.get("model_name", "potentialnet")
+            K_bond = cfg.get("K_bond", 3)
+            K_spatial = cfg.get("K_spatial", 3)
+            num_distance_bins = cfg.get("num_distance_bins", 4)
+            max_distance = cfg.get("max_distance", 5.0)
+            use_3d = cfg.get("use_3d", True)
+            pool = cfg.get("pool", "sum")
+        graph_cfg = {
+            "use_3d": use_3d,
+            "max_distance": max_distance,
+            "num_distance_bins": num_distance_bins,
+            "max_spatial_neighbors": cfg.get("max_spatial_neighbors") if 'cfg' in locals() else saved_config.get("max_spatial_neighbors", None) if 'saved_config' in locals() else None,
+            "seed": cfg.get("seed", 42) if 'cfg' in locals() else saved_config.get("seed", 42) if 'saved_config' in locals() else 42,
+        }
+        g = build_graph(
+            mol,
+            use_3d=graph_cfg["use_3d"],
+            max_distance=graph_cfg["max_distance"],
+            num_distance_bins=graph_cfg["num_distance_bins"],
+            max_spatial_neighbors=graph_cfg.get("max_spatial_neighbors"),
+            seed=graph_cfg.get("seed", 42),
+        )
+        if g is None:
+            return predict_property(smiles, property_name, model="baseline")
+        in_dim = g.x.size(-1)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        if model_name == "gin":
+            model_g = GINRegressor(in_dim, hidden=hidden, layers=layers, dropout=dropout).to(device)
+        else:
+            model_g = PotentialNetRegressor(
+                in_dim,
+                hidden=hidden,
+                K_bond=K_bond,
+                K_spatial=K_spatial,
+                num_distance_bins=num_distance_bins,
+                edge_attr_dim=1,
+                dropout=dropout,
+                pool=pool,
+            ).to(device)
         if os.path.exists(path):
             sd = torch.load(path, map_location=device)
             model_g.load_state_dict(sd, strict=False)
@@ -111,10 +150,18 @@ def predict_property(smiles: str, property_name: str, model: str = "baseline") -
                     "std": getattr(model_g, 'target_std', 1.0),
                     "hidden": getattr(model_g, 'hidden_dim', 64),
                     "layers": getattr(model_g, 'num_layers', 3),
-                    "dropout": getattr(model_g, 'dropout_rate', 0.2)
+                    "dropout": getattr(model_g, 'dropout_rate', 0.2),
+                    "model_name": getattr(model_g, 'model_name', 'potentialnet'),
+                    "K_bond": getattr(model_g, 'K_bond', 3),
+                    "K_spatial": getattr(model_g, 'K_spatial', 3),
+                    "num_distance_bins": getattr(model_g, 'num_distance_bins', 4),
+                    "max_distance": getattr(model_g, 'max_distance', 5.0),
+                    "use_3d": getattr(model_g, 'use_3d', True),
+                    "pool": getattr(model_g, 'pool', 'sum')
                 }, f)
+        model_g.graph_cfg = graph_cfg
         pack = GNNPack(model=model_g, in_dim=in_dim)
-        out = gnn_predict_atom_importance(pack, smiles)
+        out = gnn_predict_atom_importance(pack, smiles, graph_cfg=graph_cfg)
         out["model"] = "gnn"
         out["version"] = version
         return out

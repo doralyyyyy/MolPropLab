@@ -23,6 +23,9 @@ ml/saved_models/registry.json
 ml/*_comparison.json
 ml/comparison_summary.json
 
+# data
+ml/data/cache/
+
 # OS
 .DS_Store
 Thumbs.db

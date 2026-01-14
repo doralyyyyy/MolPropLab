@@ -182,23 +182,146 @@ def bond_feature_vector(bond: Chem.Bond) -> List[float]:
         1.0 if bt == Chem.rdchem.BondType.AROMATIC else 0.0
     ]
 
-# 将分子转换为PyTorch Geometric图数据结构，包含节点特征、边索引和边属性
-def build_graph(mol: Chem.Mol) -> Optional[Data]:
+
+def _try_embed_3d(mol: Chem.Mol, seed: int = 42, max_iter: int = 200) -> Optional[Chem.Mol]:
+    """使用ETKDG生成3D构象并返回含坐标的分子；失败返回None。"""
+    try:
+        mol_h = Chem.AddHs(Chem.Mol(mol))
+        params = AllChem.ETKDGv3()
+        params.randomSeed = seed
+        params.useRandomCoords = False
+        if AllChem.EmbedMolecule(mol_h, params=params) != 0:
+            return None
+        try:
+            AllChem.UFFOptimizeMolecule(mol_h, maxIters=max_iter)
+        except Exception:
+            # 优化失败时继续使用初始构象
+            pass
+        mol_no_h = Chem.RemoveHs(mol_h, updateExplicitCount=True, sanitize=False)
+        return mol_no_h
+    except Exception:
+        return None
+
+
+def _distance_bins(dist: float, max_distance: float, num_bins: int) -> int:
+    """将距离映射到[1, num_bins]的桶索引（1起始，0保留给bond）。"""
+    if dist <= 0:
+        return 1
+    bin_size = max_distance / float(num_bins)
+    idx = int(dist / bin_size)
+    idx = min(idx, num_bins - 1)
+    return idx + 1  # 1..num_bins
+
+
+# 将分子转换为PyTorch Geometric图数据结构，包含节点特征、边索引、边类型和边属性
+def build_graph(
+    mol: Chem.Mol,
+    use_3d: bool = True,
+    max_distance: float = 5.0,
+    num_distance_bins: int = 4,
+    max_spatial_neighbors: Optional[int] = None,
+    seed: int = 42,
+) -> Optional[Data]:
+    """
+    构建PotentialNet风格的图：
+    - bond边：edge_type=0
+    - spatial边：按距离分箱，edge_type=1..num_distance_bins
+    - edge_attr: 距离标量，形状[E,1]
+    """
     if not (HAS_TORCH and HAS_PYG):
         return None
-    mol = Chem.RemoveHs(mol)
-    xs = [atom_feature_vector(a) for a in mol.GetAtoms()]
-    edge_index = []
-    edge_attr = []
-    for b in mol.GetBonds():
-        i, j = b.GetBeginAtomIdx(), b.GetEndAtomIdx()
-        f = bond_feature_vector(b)
-        edge_index += [[i,j],[j,i]]
-        edge_attr += [f, f]
+
+    # 生成3D坐标（可选），失败则退化为bond-only
+    mol_for_geom = _try_embed_3d(mol, seed=seed) if use_3d else None
+    has_3d = mol_for_geom is not None
+    mol_no_h = Chem.RemoveHs(mol_for_geom if has_3d else mol, updateExplicitCount=True, sanitize=False)
+
+    xs = [atom_feature_vector(a) for a in mol_no_h.GetAtoms()]
     x = torch.tensor(xs, dtype=torch.float)
-    edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous() if edge_index else torch.empty((2,0), dtype=torch.long)
-    edge_attr = torch.tensor(edge_attr, dtype=torch.float) if edge_attr else torch.empty((0,4), dtype=torch.float)
-    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+
+    bond_edge_index = []
+    bond_edge_attr = []
+    for b in mol_no_h.GetBonds():
+        i, j = b.GetBeginAtomIdx(), b.GetEndAtomIdx()
+        # 对于bond边，若有坐标则使用键长，否则用默认占位1.0
+        if has_3d:
+            pos_i = mol_no_h.GetConformer().GetAtomPosition(i)
+            pos_j = mol_no_h.GetConformer().GetAtomPosition(j)
+            dist = float(pos_i.Distance(pos_j))
+        else:
+            dist = 1.0
+        bond_edge_index += [[i, j], [j, i]]
+        bond_edge_attr += [[dist], [dist]]
+
+    spatial_edge_index = []
+    spatial_edge_attr = []
+    spatial_edge_type = []
+
+    if has_3d and max_distance > 0:
+        conf = mol_no_h.GetConformer()
+        n = mol_no_h.GetNumAtoms()
+        # 预构建距离矩阵，避免重复计算
+        for i in range(n):
+            pos_i = conf.GetAtomPosition(i)
+            for j in range(i + 1, n):
+                pos_j = conf.GetAtomPosition(j)
+                dist = float(pos_i.Distance(pos_j))
+                if dist == 0 or dist > max_distance:
+                    continue
+                # 跳过已存在的共价键
+                if mol_no_h.GetBondBetweenAtoms(i, j):
+                    continue
+                spatial_edge_index += [[i, j], [j, i]]
+                spatial_edge_attr += [[dist], [dist]]
+                etype = _distance_bins(dist, max_distance, num_distance_bins)
+                spatial_edge_type += [etype, etype]
+
+        # 如果需要限制邻居数量，基于距离截断
+        if max_spatial_neighbors is not None and max_spatial_neighbors > 0:
+            # 简易截断：按目标节点分组，保留最近的k条
+            keep_mask = [True] * len(spatial_edge_index)
+            from collections import defaultdict
+
+            dst_to_edges = defaultdict(list)
+            for idx, (src_dst, dist_attr) in enumerate(zip(spatial_edge_index, spatial_edge_attr)):
+                dst_to_edges[src_dst[1]].append((idx, dist_attr[0]))
+            for dst, items in dst_to_edges.items():
+                if len(items) <= max_spatial_neighbors:
+                    continue
+                items.sort(key=lambda x: x[1])
+                for drop_idx, _ in items[max_spatial_neighbors:]:
+                    keep_mask[drop_idx] = False
+            spatial_edge_index = [e for e, k in zip(spatial_edge_index, keep_mask) if k]
+            spatial_edge_attr = [e for e, k in zip(spatial_edge_attr, keep_mask) if k]
+            spatial_edge_type = [e for e, k in zip(spatial_edge_type, keep_mask) if k]
+
+    # 合并边
+    edge_index = bond_edge_index + spatial_edge_index
+    edge_attr = bond_edge_attr + spatial_edge_attr
+    edge_types = [0] * len(bond_edge_index) + spatial_edge_type
+
+    edge_index_t = torch.tensor(edge_index, dtype=torch.long).t().contiguous() if edge_index else torch.empty((2,0), dtype=torch.long)
+    edge_attr_t = torch.tensor(edge_attr, dtype=torch.float).view(-1, 1) if edge_attr else torch.empty((0,1), dtype=torch.float)
+    edge_type_t = torch.tensor(edge_types, dtype=torch.long) if edge_types else torch.empty((0,), dtype=torch.long)
+
+    data = Data(
+        x=x,
+        edge_index=edge_index_t,
+        edge_attr=edge_attr_t,
+        edge_type=edge_type_t,
+    )
+    if has_3d:
+        # 保存坐标以便后续可视化或扩展
+        conf = mol_no_h.GetConformer()
+        pos = []
+        for i in range(mol_no_h.GetNumAtoms()):
+            p = conf.GetAtomPosition(i)
+            pos.append([p.x, p.y, p.z])
+        data.pos = torch.tensor(pos, dtype=torch.float)
+
+    data.n_bond_edges = int(len(bond_edge_index))
+    data.n_spatial_edges = int(len(spatial_edge_index))
+    data.has_3d = bool(has_3d)
     return data
 
 # 骨架分割（Murcko方法）

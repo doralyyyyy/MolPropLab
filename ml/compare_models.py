@@ -13,7 +13,7 @@ from train_baseline import BaselineModel, quick_baseline_weights_path
 from eval_baseline import calculate_metrics
 
 try:
-    from train_gnn import GINRegressor, GNNPack, quick_gnn_weights_path
+    from train_gnn import GINRegressor, PotentialNetRegressor, GNNPack, quick_gnn_weights_path
     from eval_gnn import gnn_predict_atom_importance
     from utils import HAS_TORCH, HAS_PYG, sanitize_smiles, build_graph
     import torch
@@ -88,6 +88,13 @@ def compare_models(property_name: str = "logp") -> Dict[str, Any]:
                     use_edge_attr = saved_config.get("use_edge_attr", False)
                     use_skip = saved_config.get("use_skip", True)
                     use_bn = saved_config.get("use_bn", True)
+                    model_name = saved_config.get("model_name", "potentialnet")
+                    K_bond = saved_config.get("K_bond", 3)
+                    K_spatial = saved_config.get("K_spatial", 3)
+                    num_distance_bins = saved_config.get("num_distance_bins", 4)
+                    max_distance = saved_config.get("max_distance", 5.0)
+                    use_3d = saved_config.get("use_3d", True)
+                    pool = saved_config.get("pool", "sum")
                 else:
                     with open(os.path.join(ROOT, "configs", "gnn.yaml"), "r") as f:
                         cfg = yaml.safe_load(f)
@@ -97,20 +104,53 @@ def compare_models(property_name: str = "logp") -> Dict[str, Any]:
                     use_edge_attr = cfg.get("use_edge_attr", False)
                     use_skip = cfg.get("use_skip", True)
                     use_bn = cfg.get("use_bn", True)
+                    model_name = cfg.get("model_name", "potentialnet")
+                    K_bond = cfg.get("K_bond", 3)
+                    K_spatial = cfg.get("K_spatial", 3)
+                    num_distance_bins = cfg.get("num_distance_bins", 4)
+                    max_distance = cfg.get("max_distance", 5.0)
+                    use_3d = cfg.get("use_3d", True)
+                    pool = cfg.get("pool", "sum")
                 
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                graph_cfg = {
+                    "use_3d": use_3d,
+                    "max_distance": max_distance,
+                    "num_distance_bins": num_distance_bins,
+                    "max_spatial_neighbors": cfg.get("max_spatial_neighbors") if 'cfg' in locals() else saved_config.get("max_spatial_neighbors", None) if 'saved_config' in locals() else None,
+                    "seed": cfg.get("seed", 42) if 'cfg' in locals() else saved_config.get("seed", 42) if 'saved_config' in locals() else 42,
+                }
                 _, mol = sanitize_smiles(test_df.iloc[0]["smiles"])
-                g = build_graph(mol)
+                g = build_graph(
+                    mol,
+                    use_3d=graph_cfg["use_3d"],
+                    max_distance=graph_cfg["max_distance"],
+                    num_distance_bins=graph_cfg["num_distance_bins"],
+                    max_spatial_neighbors=graph_cfg.get("max_spatial_neighbors"),
+                    seed=graph_cfg.get("seed", 42),
+                )
                 in_dim = g.x.size(-1)
-                model_g = GINRegressor(
-                    in_dim, 
-                    hidden=hidden, 
-                    layers=layers, 
-                    dropout=dropout,
-                    use_edge_attr=use_edge_attr,
-                    use_skip=use_skip,
-                    use_bn=use_bn
-                ).to(device)
+                if model_name == "gin":
+                    model_g = GINRegressor(
+                        in_dim, 
+                        hidden=hidden, 
+                        layers=layers, 
+                        dropout=dropout,
+                        use_edge_attr=use_edge_attr,
+                        use_skip=use_skip,
+                        use_bn=use_bn
+                    ).to(device)
+                else:
+                    model_g = PotentialNetRegressor(
+                        in_dim,
+                        hidden=hidden,
+                        K_bond=K_bond,
+                        K_spatial=K_spatial,
+                        num_distance_bins=num_distance_bins,
+                        edge_attr_dim=1,
+                        dropout=dropout,
+                        pool=pool,
+                    ).to(device)
                 
                 # 加载标准化参数
                 if os.path.exists(norm_path):
@@ -130,12 +170,13 @@ def compare_models(property_name: str = "logp") -> Dict[str, Any]:
                     }
                 else:
                     # 只有在模型加载成功时才继续评估
+                    model_g.graph_cfg = graph_cfg
                     pack = GNNPack(model_g, in_dim)
                     
                     y_true, y_pred = [], []
                     for smi, y in zip(test_df["smiles"], test_df["target"]):
                         y_true.append(float(y))
-                        out = gnn_predict_atom_importance(pack, smi)
+                        out = gnn_predict_atom_importance(pack, smi, graph_cfg=graph_cfg)
                         y_pred.append(out["prediction"])
                     
                     results["gnn"] = calculate_metrics(y_true, y_pred)

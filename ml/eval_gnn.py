@@ -13,7 +13,7 @@ import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 from utils import ROOT, HAS_TORCH, HAS_PYG, sanitize_smiles, build_graph, scaffold_split, preprocess_data
-from train_gnn import GINRegressor, GNNPack, quick_gnn_weights_path
+from train_gnn import GINRegressor, PotentialNetRegressor, GNNPack, quick_gnn_weights_path
 from eval_baseline import calculate_metrics
 
 if not (HAS_TORCH and HAS_PYG):
@@ -22,14 +22,25 @@ if not (HAS_TORCH and HAS_PYG):
 
 import torch
 import numpy as np
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # 使用GNN模型进行预测，使用MC-Dropout估计不确定性，计算原子重要性（支持反标准化）
-def gnn_predict_atom_importance(pack: GNNPack, smiles: str) -> Dict[str, Any]:
+def gnn_predict_atom_importance(pack: GNNPack, smiles: str, graph_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     from utils import mol_to_sdf
     _, mol = sanitize_smiles(smiles)
     if not mol: return {"prediction": float("nan"), "uncertainty": float("nan"), "atom_importances": [], "sdf": ""}
-    g = build_graph(mol)
+    cfg = graph_cfg or getattr(pack.model, "graph_cfg", {}) or {}
+    try:
+        g = build_graph(
+            mol,
+            use_3d=cfg.get("use_3d", True),
+            max_distance=cfg.get("max_distance", 5.0),
+            num_distance_bins=cfg.get("num_distance_bins", 4),
+            max_spatial_neighbors=cfg.get("max_spatial_neighbors"),
+            seed=cfg.get("seed", 42),
+        )
+    except TypeError:
+        g = build_graph(mol)
     if g is None: return {"prediction": float("nan"), "uncertainty": float("nan"), "atom_importances": [], "sdf": ""}
     device = next(pack.model.parameters()).device
     
@@ -103,6 +114,13 @@ def eval_gnn_main(args=None):
         use_edge_attr = saved_config.get("use_edge_attr", False)
         use_skip = saved_config.get("use_skip", True)
         use_bn = saved_config.get("use_bn", True)
+        model_name = saved_config.get("model_name", "potentialnet")
+        K_bond = saved_config.get("K_bond", 3)
+        K_spatial = saved_config.get("K_spatial", 3)
+        num_distance_bins = saved_config.get("num_distance_bins", 4)
+        max_distance = saved_config.get("max_distance", 5.0)
+        use_3d = saved_config.get("use_3d", True)
+        pool = saved_config.get("pool", "sum")
     else:
         with open(a.cfg, "r") as f:
             cfg = yaml.safe_load(f)
@@ -112,23 +130,56 @@ def eval_gnn_main(args=None):
         use_edge_attr = cfg.get("use_edge_attr", False)
         use_skip = cfg.get("use_skip", True)
         use_bn = cfg.get("use_bn", True)
+        model_name = cfg.get("model_name", "potentialnet")
+        K_bond = cfg.get("K_bond", 3)
+        K_spatial = cfg.get("K_spatial", 3)
+        num_distance_bins = cfg.get("num_distance_bins", 4)
+        max_distance = cfg.get("max_distance", 5.0)
+        use_3d = cfg.get("use_3d", True)
+        pool = cfg.get("pool", "sum")
     
     # 使用scaffold_split进行数据集划分（与训练时一致）
     train_df, val_df, test_df = scaffold_split(df, frac=(0.7, 0.15, 0.15), seed=42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    graph_cfg = {
+        "use_3d": use_3d,
+        "max_distance": max_distance,
+        "num_distance_bins": num_distance_bins,
+        "max_spatial_neighbors": cfg.get("max_spatial_neighbors"),
+        "seed": cfg.get("seed", 42),
+    }
     # 构建一个虚拟图以获取特征维度
     _, mol = sanitize_smiles(test_df.iloc[0]["smiles"])
-    g = build_graph(mol)
+    g = build_graph(
+        mol,
+        use_3d=graph_cfg["use_3d"],
+        max_distance=graph_cfg["max_distance"],
+        num_distance_bins=graph_cfg["num_distance_bins"],
+        max_spatial_neighbors=graph_cfg.get("max_spatial_neighbors"),
+        seed=graph_cfg.get("seed", 42),
+    )
     in_dim = g.x.size(-1)
-    model_g = GINRegressor(
-        in_dim, 
-        hidden=hidden, 
-        layers=layers, 
-        dropout=dropout,
-        use_edge_attr=use_edge_attr,
-        use_skip=use_skip,
-        use_bn=use_bn
-    ).to(device)
+    if model_name == "gin":
+        model_g = GINRegressor(
+            in_dim, 
+            hidden=hidden, 
+            layers=layers, 
+            dropout=dropout,
+            use_edge_attr=use_edge_attr,
+            use_skip=use_skip,
+            use_bn=use_bn
+        ).to(device)
+    else:
+        model_g = PotentialNetRegressor(
+            in_dim,
+            hidden=hidden,
+            K_bond=K_bond,
+            K_spatial=K_spatial,
+            num_distance_bins=num_distance_bins,
+            edge_attr_dim=1,
+            dropout=dropout,
+            pool=pool,
+        ).to(device)
     # 先加载标准化参数（如果存在），确保即使模型文件不存在也能设置默认值
     if os.path.exists(norm_path):
         with open(norm_path, "r") as f:
@@ -155,7 +206,7 @@ def eval_gnn_main(args=None):
     y_true, y_pred = [], []
     for smi, y in zip(test_df["smiles"], test_df[a.target]):
         y_true.append(float(y))
-        out = gnn_predict_atom_importance(GNNPack(model_g, in_dim), smi)
+        out = gnn_predict_atom_importance(GNNPack(model_g, in_dim), smi, graph_cfg=graph_cfg)
         y_pred.append(out["prediction"])
     
     metrics = calculate_metrics(y_true, y_pred)
