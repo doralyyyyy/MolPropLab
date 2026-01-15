@@ -4,11 +4,11 @@ import { Routes, Route, Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import useSWR from "swr";
 import { Button, Card, Input, Textarea, Badge, Progress, Table } from "./ui";
-import { Chart, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend } from "chart.js";
-import { Line } from "react-chartjs-2";
+import { Chart, LineElement, PointElement, LinearScale, LogarithmicScale, CategoryScale, BarElement, Tooltip, Legend } from "chart.js";
+import { Line, Bar } from "react-chartjs-2";
 import { FiUpload, FiSearch, FiDatabase, FiBarChart2, FiHome, FiFileText, FiDownload } from "react-icons/fi";
 
-Chart.register(LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
+Chart.register(LineElement, PointElement, LinearScale, LogarithmicScale, CategoryScale, BarElement, Tooltip, Legend);
 
 // 3Dmol global
 declare global {
@@ -619,22 +619,36 @@ const ModelExplorer: React.FC = () => {
 const ExplanationViewer: React.FC = () => {
   const { data, error } = useSWR("/models", fetcher);
   const properties = data?.properties || [];
+  const [metric, setMetric] = useState<"rmse" | "mape">("rmse");
   
-  // 准备图表数据：显示所有性质的RMSE对比
-  const evaluatedProperties = properties.filter((p: any) => 
-    (!p.baseline?.error && p.baseline?.rmse !== undefined) || 
-    (!p.gnn?.error && p.gnn?.rmse !== undefined)
+  const hasMetric = (obj: any) => {
+    if (!obj || obj.error) return false;
+    const v = metric === "rmse" ? obj.rmse : obj.mape;
+    return v !== undefined && v !== null && isFinite(Number(v));
+  };
+
+  // 根据当前指标筛选，避免 RMSE/MAPE 混用导致展示混乱
+  const evaluatedProperties = properties.filter((p: any) =>
+    hasMetric(p.baseline) || hasMetric(p.gnn)
   );
   
   const chart = useMemo(() => {
     if (evaluatedProperties.length === 0) return null;
+
+    const pick = (obj: any) => {
+      if (!hasMetric(obj)) return null;
+      const n = Number(metric === "rmse" ? obj.rmse : obj.mape);
+      // log scale 不能显示 <=0
+      if (metric === "rmse" && n <= 0) return null;
+      return n;
+    };
     
     return {
       labels: evaluatedProperties.map((p: any) => p.property_name || p.property),
       datasets: [
         { 
-          label: "Baseline RMSE", 
-          data: evaluatedProperties.map((p: any) => p.baseline?.rmse || null), 
+          label: metric === "rmse" ? "Baseline RMSE (log y)" : "Baseline MAPE (%)", 
+          data: evaluatedProperties.map((p: any) => pick(p.baseline)), 
           borderWidth: 2,
           borderColor: "#3b82f6",
           backgroundColor: "rgba(59, 130, 246, 0.1)",
@@ -642,8 +656,8 @@ const ExplanationViewer: React.FC = () => {
           pointBorderColor: "#3b82f6"
         },
         { 
-          label: "GNN RMSE", 
-          data: evaluatedProperties.map((p: any) => p.gnn?.rmse || null), 
+          label: metric === "rmse" ? "GNN RMSE (log y)" : "GNN MAPE (%)", 
+          data: evaluatedProperties.map((p: any) => pick(p.gnn)), 
           borderWidth: 2,
           borderColor: "#10b981",
           backgroundColor: "rgba(16, 185, 129, 0.1)",
@@ -652,7 +666,107 @@ const ExplanationViewer: React.FC = () => {
         }
       ]
     };
+  }, [evaluatedProperties, metric]);
+
+  const chartOptions = useMemo(() => {
+    return {
+      responsive: true,
+      interaction: { mode: "index" as const, intersect: false },
+      plugins: {
+        legend: { position: "top" as const },
+        tooltip: {
+          callbacks: {
+            label: (ctx: any) => {
+              const v = ctx.parsed?.y;
+              if (v === null || v === undefined || Number.isNaN(v)) return `${ctx.dataset.label}: N/A`;
+              const num = Number(v);
+              if (metric === "rmse") return `${ctx.dataset.label}: ${num.toExponential(3)}`;
+              return `${ctx.dataset.label}: ${num.toFixed(2)}%`;
+            }
+          }
+        }
+      },
+      scales: {
+        y: metric === "rmse"
+          ? {
+              type: "logarithmic" as const,
+              title: { display: true, text: "RMSE (log scale, unit varies by property)" },
+              ticks: {
+                maxTicksLimit: 6,
+                callback: (value: any) => {
+                  const n = Number(value);
+                  if (!isFinite(n)) return "";
+                  const exp = Math.log10(n);
+                  const isPow10 = Math.abs(exp - Math.round(exp)) < 1e-6;
+                  if (!isPow10) return "";
+                  // 只显示 10^k 的主刻度，减少密度
+                  if (n >= 1000 || n <= 0.01) return n.toExponential(0);
+                  return n.toString();
+                }
+              }
+            }
+          : {
+              type: "linear" as const,
+              title: { display: true, text: "MAPE (%)" },
+              ticks: { callback: (v: any) => `${v}%` }
+            },
+        x: { ticks: { maxRotation: 45, minRotation: 0 } }
+      }
+    };
+  }, [metric]);
+
+  const r2Chart = useMemo(() => {
+    if (evaluatedProperties.length === 0) return null;
+    const pickR2 = (obj: any) => {
+      if (!obj || obj.error) return null;
+      const v = obj.r2;
+      if (v === undefined || v === null || !isFinite(Number(v))) return null;
+      return Number(v);
+    };
+    return {
+      labels: evaluatedProperties.map((p: any) => p.property_name || p.property),
+      datasets: [
+        {
+          label: "Baseline R²",
+          data: evaluatedProperties.map((p: any) => pickR2(p.baseline)),
+          backgroundColor: "rgba(59, 130, 246, 0.4)",
+          borderColor: "#3b82f6",
+          borderWidth: 1,
+        },
+        {
+          label: "GNN R²",
+          data: evaluatedProperties.map((p: any) => pickR2(p.gnn)),
+          backgroundColor: "rgba(16, 185, 129, 0.4)",
+          borderColor: "#10b981",
+          borderWidth: 1,
+        },
+      ],
+    };
   }, [evaluatedProperties]);
+
+  const r2Options = useMemo(() => {
+    return {
+      responsive: true,
+      interaction: { mode: "index" as const, intersect: false },
+      plugins: { legend: { position: "top" as const } },
+      scales: {
+        y: {
+          title: { display: true, text: "R² (higher is better)" },
+          suggestedMin: -1,
+          suggestedMax: 1,
+        },
+        x: { ticks: { maxRotation: 45, minRotation: 0 } },
+      },
+    };
+  }, []);
+
+  const summary = useMemo(() => {
+    const total = properties.length;
+    const baselineWins = properties.filter((p: any) => p.better_model === "baseline").length;
+    const gnnWins = properties.filter((p: any) => p.better_model === "gnn").length;
+    const evaluated = properties.filter((p: any) => p.better_model).length;
+    return { total, evaluated, baselineWins, gnnWins };
+  }, [properties]);
 
   return (
     <Layout>
@@ -679,21 +793,59 @@ const ExplanationViewer: React.FC = () => {
         ) : (
           <div>
             <p className="text-sm text-muted mb-4">
-              此图表比较 Baseline 和 GNN 模型在所有性质上的 RMSE（均方根误差），用于评估模型的预测性能。数值越小越好。
+              {metric === "rmse"
+                ? "此图表比较 Baseline 和 GNN 在各性质上的 RMSE。由于不同性质量纲差异很大，纵轴使用对数刻度（更便于同时观察多性质）。数值越小越好。"
+                : "此图表比较 Baseline 和 GNN 在各性质上的 MAPE（百分比误差），更适合跨性质对比。数值越小越好。"}
             </p>
-            {chart && <Line data={chart} />}
+
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-sm text-muted">指标：</span>
+              <select
+                className="bg-white border border-border rounded px-2 py-1 text-sm"
+                value={metric}
+                onChange={(e) => setMetric(e.target.value as any)}
+              >
+                <option value="rmse">RMSE（对数纵轴）</option>
+                <option value="mape">MAPE（%）</option>
+              </select>
+            </div>
+            {chart && <Line data={chart} options={chartOptions} />}
             <div className="mt-4 grid md:grid-cols-2 gap-4">
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                 <p className="text-sm font-medium text-blue-800 mb-1">Baseline 模型</p>
                 <p className="text-xs text-blue-700">
-                  平均 RMSE: {(evaluatedProperties.reduce((sum: number, p: any) => sum + (p.baseline?.rmse || 0), 0) / evaluatedProperties.filter((p: any) => p.baseline?.rmse).length).toFixed(4)}
+                  {metric === "rmse"
+                    ? `平均 RMSE: ${(evaluatedProperties.reduce((sum: number, p: any) => sum + (p.baseline?.rmse || 0), 0) / Math.max(1, evaluatedProperties.filter((p: any) => hasMetric(p.baseline)).length)).toFixed(4)}`
+                    : `平均 MAPE: ${(evaluatedProperties.reduce((sum: number, p: any) => sum + (p.baseline?.mape || 0), 0) / Math.max(1, evaluatedProperties.filter((p: any) => hasMetric(p.baseline)).length)).toFixed(2)}%`}
                 </p>
               </div>
               <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                 <p className="text-sm font-medium text-green-800 mb-1">GNN 模型</p>
                 <p className="text-xs text-green-700">
-                  平均 RMSE: {(evaluatedProperties.reduce((sum: number, p: any) => sum + (p.gnn?.rmse || 0), 0) / evaluatedProperties.filter((p: any) => p.gnn?.rmse).length).toFixed(4)}
+                  {metric === "rmse"
+                    ? `平均 RMSE: ${(evaluatedProperties.reduce((sum: number, p: any) => sum + (p.gnn?.rmse || 0), 0) / Math.max(1, evaluatedProperties.filter((p: any) => hasMetric(p.gnn)).length)).toFixed(4)}`
+                    : `平均 MAPE: ${(evaluatedProperties.reduce((sum: number, p: any) => sum + (p.gnn?.mape || 0), 0) / Math.max(1, evaluatedProperties.filter((p: any) => hasMetric(p.gnn)).length)).toFixed(2)}%`}
                 </p>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <h4 className="text-sm font-semibold mb-2">R² 对比（同性质内越高越好）</h4>
+              {r2Chart && <Bar data={r2Chart} options={r2Options} />}
+            </div>
+
+            <div className="mt-6 grid md:grid-cols-3 gap-3">
+              <div className="bg-gray-50 border border-border rounded-lg p-3">
+                <p className="text-xs text-muted mb-1">已评估性质</p>
+                <p className="text-lg font-semibold">{summary.evaluated}/{summary.total}</p>
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-xs text-blue-700 mb-1">Baseline 优势</p>
+                <p className="text-lg font-semibold text-blue-800">{summary.baselineWins}</p>
+              </div>
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <p className="text-xs text-green-700 mb-1">GNN 优势</p>
+                <p className="text-lg font-semibold text-green-800">{summary.gnnWins}</p>
               </div>
             </div>
           </div>
