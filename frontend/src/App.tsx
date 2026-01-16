@@ -760,6 +760,75 @@ const ExplanationViewer: React.FC = () => {
     };
   }, []);
 
+  const correlationChart = useMemo(() => {
+    if (evaluatedProperties.length === 0) return null;
+    const pickCorr = (obj: any) => {
+      if (!obj || obj.error) return null;
+      const v = obj.correlation;
+      if (v === undefined || v === null || !isFinite(Number(v))) return null;
+      return Number(v);
+    };
+    return {
+      labels: evaluatedProperties.map((p: any) => p.property_name || p.property),
+      datasets: [
+        {
+          label: "Baseline Correlation",
+          data: evaluatedProperties.map((p: any) => pickCorr(p.baseline)),
+          backgroundColor: "rgba(59, 130, 246, 0.35)",
+          borderColor: "#3b82f6",
+          borderWidth: 1,
+        },
+        {
+          label: "GNN Correlation",
+          data: evaluatedProperties.map((p: any) => pickCorr(p.gnn)),
+          backgroundColor: "rgba(16, 185, 129, 0.35)",
+          borderColor: "#10b981",
+          borderWidth: 1,
+        },
+      ],
+    };
+  }, [evaluatedProperties]);
+
+  const correlationOptions = useMemo(() => {
+    return {
+      responsive: true,
+      interaction: { mode: "index" as const, intersect: false },
+      plugins: {
+        legend: { position: "top" as const },
+        tooltip: {
+          callbacks: {
+            label: (ctx: any) => {
+              const v = ctx.parsed?.y;
+              if (v === null || v === undefined || Number.isNaN(v)) return `${ctx.dataset.label}: N/A`;
+              return `${ctx.dataset.label}: ${Number(v).toFixed(4)}`;
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          title: { display: true, text: "Correlation (Pearson, higher is better)" },
+          suggestedMin: -1,
+          suggestedMax: 1,
+        },
+        x: { ticks: { maxRotation: 45, minRotation: 0 } },
+      },
+    };
+  }, []);
+
+  const correlationSummary = useMemo(() => {
+    const baselineVals = evaluatedProperties
+      .map((p: any) => p.baseline?.correlation)
+      .filter((v: any) => v !== undefined && v !== null && isFinite(Number(v)))
+      .map((v: any) => Number(v));
+    const gnnVals = evaluatedProperties
+      .map((p: any) => p.gnn?.correlation)
+      .filter((v: any) => v !== undefined && v !== null && isFinite(Number(v)))
+      .map((v: any) => Number(v));
+    const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+    return { baselineAvg: avg(baselineVals), gnnAvg: avg(gnnVals) };
+  }, [evaluatedProperties]);
+
   const summary = useMemo(() => {
     const total = properties.length;
     const baselineWins = properties.filter((p: any) => p.better_model === "baseline").length;
@@ -832,6 +901,17 @@ const ExplanationViewer: React.FC = () => {
             <div className="mt-6">
               <h4 className="text-sm font-semibold mb-2">R² 对比（同性质内越高越好）</h4>
               {r2Chart && <Bar data={r2Chart} options={r2Options} />}
+            </div>
+
+            <div className="mt-6">
+              <h4 className="text-sm font-semibold mb-2">Correlation 对比（Pearson，越高越好）</h4>
+              <p className="text-xs text-muted mb-2">
+                相关系数反映预测值与真实值的线性一致性，适合补充 RMSE/MAPE 的整体趋势判断。
+                {correlationSummary.baselineAvg !== null && correlationSummary.gnnAvg !== null
+                  ? ` 平均相关系数：Baseline ${correlationSummary.baselineAvg.toFixed(4)}，GNN ${correlationSummary.gnnAvg.toFixed(4)}。`
+                  : ""}
+              </p>
+              {correlationChart && <Bar data={correlationChart} options={correlationOptions} />}
             </div>
 
             <div className="mt-6 grid md:grid-cols-3 gap-3">
