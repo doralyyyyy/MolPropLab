@@ -9,6 +9,7 @@ dist
 # Python
 .venv
 __pycache__/
+.pytest_cache/
 *.pyc
 .ipynb_checkpoints
 
