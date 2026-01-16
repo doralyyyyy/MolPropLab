@@ -2,7 +2,7 @@
 
 一个用于从 SMILES 预测分子性质的端到端全栈机器学习应用。
 
-## 1. 核心特性
+## 一、核心特性
 
 - **多性质预测：** 支持同时预测 10 种分子性质（分子量、LogP、LogS、pKa、沸点、熔点、折射率、蒸气压、密度、闪点）
 - **Python 端 ML：** RDKit 预处理、分子描述符、ECFP（1024）、PyTorch Geometric PotentialNet/GIN、LightGBM/RandomForest 基线模型  
@@ -16,7 +16,43 @@
 
 ---
 
-## 2. 环境要求
+## 二、仓库结构
+
+### 顶层目录
+
+- **`ml/`**：机器学习核心（数据处理、训练/评估、推理脚本、模型权重与评估结果）。
+- **`server/`**：后端 API（Express + TypeScript），负责对外提供预测接口、批处理任务队列，并通过子进程调用 `ml/inference.py`。
+- **`frontend/`**：前端 Web（React + Vite + Tailwind），包含单条预测、批量预测、模型浏览与对比图表、3D 分子可视化等页面。
+- **`scripts/`**：辅助安装脚本，主要面向 Linux/macOS，一键安装依赖。
+- **`requirements.txt`**：Python 依赖。
+- **`environment.yml`**：Conda 环境（包含 RDKit 与部分系统依赖），用于一键创建可运行环境。
+
+### `ml/` 目录（机器学习）
+
+- **`ml/data/`**：各性质的数据集（CSV，列为 `smiles,target`）。
+- **`ml/saved_models/`**：存储训练好的模型权重与标准化参数（需先进行训练）：
+  - Baseline：`baseline_<property>_v1.pkl`
+  - GNN：`gnn_<property>_v1.pth` + `gnn_<property>_v1_norm.json`
+- **`ml/configs/`**：训练配置。
+- **`ml/utils.py`**：公共工具函数（SMILES 清洗、ECFP/描述符特征、图构建、scaffold split、预处理等）。
+- **`ml/train_baseline.py` / `ml/train_gnn.py`**：训练脚本（分别训练基线模型与 GNN）。
+- **`ml/eval_baseline.py` / `ml/eval_gnn.py`**：评估脚本（输出 RMSE/MAE/R²/MAPE/相关系数等指标）。
+- **`ml/compare_models.py`**：对比 Baseline 与 GNN，生成 `*_comparison.json` 与 `comparison_summary.json`，供前端展示。
+- **`ml/inference.py`**：推理入口（支持单条 SMILES 预测与 CSV/XLSX 批量预测，输出 JSON/CSV）。
+- **`ml/tests/`**：Python 单元测试。
+
+### `server/` 目录（后端）
+
+- **`server/src/index.ts`**：后端主入口，提供 `/predict`、`/batch_predict`、`/models` 等 API。
+- **`server/tmp/`**：上传与批处理的临时文件目录。
+- **`server/test/`**：后端测试。
+
+### `frontend/` 目录（前端）
+
+- **`frontend/src/App.tsx`**：前端路由与页面逻辑入口（单条预测/批量预测/模型浏览/对比图表）。
+- **`frontend/src/ui.tsx` / `frontend/src/index.css`**：UI 组件与全局样式。
+
+## 三、环境要求
 
 > 注：为实验者所用系统环境
 
@@ -46,7 +82,7 @@
 
 ---
 
-## 3. 安装步骤
+## 四、安装步骤
 
 这里以 **Conda + Windows** 举例，macOS / Linux 同理，只是命令行路径略有差别。
 
@@ -122,7 +158,7 @@ npm install
 
 ---
 
-## 4. 启动服务
+## 五、启动服务
 
 建议保持 **Python 环境处于已激活状态**（`conda activate molproplab`）。
 
@@ -154,7 +190,7 @@ npm run dev
 
 ---
 
-## 5. 使用流程
+## 六、使用流程
 
 ### Web 界面使用
 
@@ -192,7 +228,7 @@ npm run dev
 
 ---
 
-## 6. Python CLI
+## 七、Python CLI
 
 ### 训练模型
 
@@ -250,7 +286,7 @@ python inference.py --csv data/logp.csv --output out.csv --model gnn
 
 ---
 
-## 7. 常见问题与故障排除
+## 八、常见问题与故障排除
 
 ### 1. RDKit 安装失败
 
@@ -314,7 +350,7 @@ python inference.py --csv data/logp.csv --output out.csv --model gnn
 
 ---
 
-## 8. 模型说明
+## 九、模型说明
 
 ### 数据预处理
 
@@ -398,7 +434,16 @@ python inference.py --csv data/logp.csv --output out.csv --model gnn
 
 ---
 
-## 9. Node.js 测试
+## 十、测试
+
+### Python 测试
+
+```bash
+cd ml
+python -m tests.test_inference
+```
+
+### Node.js 测试
 
 ```bash
 cd server
