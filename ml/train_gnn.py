@@ -31,11 +31,10 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GINConv, global_add_pool, global_mean_pool, global_max_pool
 from torch_geometric.nn import BatchNorm, LayerNorm
 
-# 图神经网络（GIN）- 改进版本
+# 图神经网络（GIN）
 
 class GINRegressor(nn.Module):
-    # 初始化GIN（图同构网络）回归模型 - 改进版本
-    # 支持边特征、跳跃连接、多种池化方式、BatchNorm
+    # 初始化GIN（图同构网络）回归模型
     def __init__(self, in_dim, hidden=128, layers=4, dropout=0.2, use_edge_attr=False, use_skip=True, use_bn=True):
         super().__init__()
         self.dropout = dropout
@@ -49,7 +48,6 @@ class GINRegressor(nn.Module):
         bns = []
         for i in range(layers):
             # 每层的MLP：使用更深的网络
-            # 注意：BatchNorm1d在batch_size=1时会出错，所以使用LayerNorm替代
             mlp = nn.Sequential(
                 nn.Linear(hidden, hidden),
                 nn.LayerNorm(hidden) if use_bn else nn.Identity(),
@@ -58,7 +56,6 @@ class GINRegressor(nn.Module):
                 nn.LayerNorm(hidden) if use_bn else nn.Identity(),
                 nn.ReLU()
             )
-            # GINConv不支持edge_attr，如果需要边特征，可以使用GINEConv
             # 这里先使用标准GINConv，边特征可以通过其他方式融合
             mlps.append(GINConv(mlp, train_eps=True))
             if use_bn:
@@ -80,7 +77,6 @@ class GINRegressor(nn.Module):
         pool_dim *= 3  # mean + max + sum
         
         # 最终预测层：使用更深的网络
-        # 使用LayerNorm替代BatchNorm，避免batch_size=1的问题
         self.lin = nn.Sequential(
             nn.Linear(pool_dim, hidden * 2),
             nn.LayerNorm(hidden * 2) if use_bn else nn.Identity(),
@@ -106,7 +102,6 @@ class GINRegressor(nn.Module):
         
         # 通过GIN层
         for i, (conv, bn) in enumerate(zip(self.convs, self.bns)):
-            # GINConv不支持edge_attr，标准调用
             x = conv(x, edge_index)
             
             x = bn(x)
@@ -572,7 +567,7 @@ def run_smoke_test(cfg_path: str = None):
     total_spatial = sum(getattr(g, "n_spatial_edges", 0) for g in graphs)
     print(f"[smoke] graphs={len(graphs)}, avg nodes={total_nodes/len(graphs):.2f}, bond edges={total_bonds/len(graphs):.2f}, spatial edges={total_spatial/len(graphs):.2f}")
 
-# 训练演示用的GNN模型并保存（支持多性质）
+# 训练演示用的GNN模型并保存
 def train_gnn_demo(property_name: str = "logp") -> str:
     if not (HAS_TORCH and HAS_PYG):
         raise RuntimeError("GNN deps missing")

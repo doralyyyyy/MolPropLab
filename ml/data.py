@@ -1,13 +1,13 @@
 """
-Data curation utilities for populating the CSVs under ``ml/data``.
+数据整理/补全工具：用于生成并刷新 `ml/data/*.csv` 的性质数据。
 
-Features added for this project:
-- 与 utils.PROPERTIES 对齐的属性名称
-- 自动标准化/去重 SMILES（使用 utils.sanitize_smiles）
-- 先用 RDKit 计算可离线的性质（MW、LogP、ESOL LogS），
-  其他性质再调用 PubChem，并带有简单缓存与退避
-- 兼容现有带表头的 CSV（columns: smiles,target）
-- CLI：按属性刷新数据文件，支持继续、跳过已有值与节流
+主要特性：
+- 与 `utils.PROPERTIES` 的属性 key 对齐
+- 自动规范化/去重 SMILES（使用 `utils.sanitize_smiles`）
+- 可离线计算的性质优先用 RDKit（MW、LogP、ESOL LogS）
+- 其他性质通过 PubChem 获取，并带简单缓存 + 重试/退避
+- 兼容已有 CSV（表头为：smiles,target）
+- 提供 CLI：按性质刷新数据文件，支持跳过已有值与节流
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 def _requests_session() -> requests.Session:
     """
-    PubChem 会有间歇性 429/5xx，使用 Session + Retry 提升稳定性。
+    PubChem 会有间歇性的 429/5xx，使用 Session + Retry 提升稳定性。
     """
     s = requests.Session()
     retry = Retry(
@@ -56,7 +56,7 @@ def _requests_session() -> requests.Session:
 
 _SESSION = _requests_session()
 
-# --- 1) RDKit: MW / LogP ---
+# 1) RDKit：MW / LogP
 def rdkit_mw_logp(smiles: str):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
@@ -66,8 +66,7 @@ def rdkit_mw_logp(smiles: str):
     return mw, logp
 
 
-# --- 2) ESOL: LogS (log10 mol/L) ---
-# Coefficients from a common RDKit-based ESOL refit implementation
+# 2) ESOL：LogS（log10 mol/L）
 def esol_logS(smiles: str):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
@@ -94,10 +93,10 @@ def esol_logS(smiles: str):
     )
 
 
-# --- 3) PubChem helpers ---
+# 3) PubChem 辅助函数
 def smiles_to_cid(smiles: str):
     """
-    Resolve first CID for a SMILES via PUG REST.
+    通过 PUG REST 将 SMILES 解析为 CID（取第一个 CID）。
     """
     url = f"{PUBCHEM_PUGREST}/compound/smiles/cids/JSON"
     try:
@@ -108,7 +107,7 @@ def smiles_to_cid(smiles: str):
         cids = (((j or {}).get("IdentifierList") or {}).get("CID") or [])
         return int(cids[0]) if cids else None
     except Exception:
-        # 回退为txt解析（兼容极端情况）
+        # 回退为txt解析
         try:
             url_txt = f"{PUBCHEM_PUGREST}/compound/smiles/cids/txt"
             r2 = _SESSION.post(url_txt, data={"smiles": smiles}, timeout=30)
@@ -195,7 +194,6 @@ def _convert_density(value: float, unit: str) -> Optional[float]:
     return None
 
 def _convert_refractive_index(value: float, unit: str) -> Optional[float]:
-    # 通常无量纲（或标注为 "RI" / "nD"）
     _ = unit
     return float(value)
 
@@ -206,8 +204,8 @@ def _convert_pka(value: float, unit: str) -> Optional[float]:
 
 def _extract_candidates_from_pugview(j: dict) -> List[Tuple[float, str, str]]:
     """
-    Extract numeric candidates with light context from PUG-View JSON.
-    Return list of (value, unit, raw_string).
+    从 PUG-View JSON 中提取“数字候选值”，并保留轻量上下文。
+    返回 (value, unit, raw_string) 列表。
     """
     out: List[Tuple[float, str, str]] = []
     for s in _walk_strings(j):
@@ -219,7 +217,7 @@ def _extract_candidates_from_pugview(j: dict) -> List[Tuple[float, str, str]]:
                 continue
             unit = m.group("unit").strip()
             out.append((v, unit, s))
-        # 退化：只有数字没有单位，也收集（用于 refractive index / pKa 等）
+        # 退化：只有数字没有单位，也收集
         if not _num_with_unit.search(s):
             m2 = _num.search(s)
             if m2:
@@ -232,9 +230,9 @@ def _extract_candidates_from_pugview(j: dict) -> List[Tuple[float, str, str]]:
 
 def _choose_value(property_key: str, candidates: List[Tuple[float, str, str]]) -> Optional[float]:
     """
-    Choose a stable value from candidates:
-    - 先做单位转换到项目内部标准单位
-    - 多个候选取中位数（降低噪声），并剔除明显不合理值
+    从候选值中选择一个相对稳定的数值：
+    - 先尝试把单位转换到项目内部的标准单位
+    - 多个候选时取中位数（降低噪声），并做粗粒度合理性过滤
     """
     converters = {
         "boiling_point": _convert_temperature,
@@ -277,7 +275,7 @@ def _choose_value(property_key: str, candidates: List[Tuple[float, str, str]]) -
             if 1.0 <= v <= 3.0:
                 vals.append(float(v))
         elif property_key == "pka":
-            # 常见 pKa 取值范围（宽松）
+            # 常见 pKa 取值范围
             if -5.0 <= v <= 25.0:
                 vals.append(float(v))
 
@@ -313,7 +311,7 @@ def extract_first_number_from_pugview(j: dict):
     return None
 
 
-# --- 4) heading map (aligned to utils.PROPERTIES keys) ---
+# 4) heading 映射
 PUGVIEW_HEADINGS: Dict[str, str] = {
     "boiling_point": "Boiling+Point",
     "melting_point": "Melting+Point",
@@ -341,9 +339,8 @@ def _save_cache(target: str, cache: Dict[str, float]):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
-
+# 为单个 SMILES 获取指定性质数值
 def get_property(smiles: str, target: str) -> Optional[float]:
-    """Resolve a property value for one SMILES with fallbacks."""
     if target == "molecular_weight" or target == "mw":
         mw, _ = rdkit_mw_logp(smiles)
         return mw
@@ -366,9 +363,8 @@ def get_property(smiles: str, target: str) -> Optional[float]:
     # 回退：保底逻辑（旧实现），确保尽量不返回空
     return extract_first_number_from_pugview(j)
 
-
+# 带缓存 + 简单指数退避的性质获取封装
 def fetch_property_with_cache(smiles: str, target: str, cache: Dict[str, float], sleep_s: float, retries: int = 2) -> Optional[float]:
-    """Fetch a property with caching and simple exponential backoff."""
     if smiles in cache:
         return cache[smiles]
 
@@ -385,9 +381,8 @@ def fetch_property_with_cache(smiles: str, target: str, cache: Dict[str, float],
         backoff *= 2
     return None
 
-
+# 读取含 [smiles,target] 的 CSV，并进行 SMILES 清洗与去重
 def load_smiles_csv(path: Path) -> pd.DataFrame:
-    """Load a CSV with columns [smiles,target], clean and deduplicate."""
     df = pd.read_csv(path)
     if df.shape[1] < 2:
         raise ValueError(f"CSV {path} must have at least two columns: smiles,target")
@@ -403,20 +398,18 @@ def load_smiles_csv(path: Path) -> pd.DataFrame:
     df = df.dropna(subset=["smiles"]).drop_duplicates("smiles")
     return df.reset_index(drop=True)
 
-
+# 填充或刷新某个性质的 CSV
 def refresh_csv(property_name: str, input_csv: Optional[Path] = None, output_csv: Optional[Path] = None,
                 sleep_s: float = 0.25, retries: int = 2, recompute_all: bool = True, use_cache: bool = True):
     """
-    Fill or refresh a property CSV.
-
-    Args:
-        property_name: key in utils.PROPERTIES (e.g., 'boiling_point')
-        input_csv: source CSV path (defaults to data/<prop>.csv)
-        output_csv: output path (defaults to overwrite input)
-        sleep_s: base sleep to respect PubChem rate limit
-        retries: retries with exponential backoff for PubChem calls
-        recompute_all: if False, keep existing numeric targets
-        use_cache: load/save cache to data/cache/<prop>.json
+    参数：
+        property_name: `utils.PROPERTIES` 中的 key（如 'boiling_point'）
+        input_csv: 输入 CSV 路径（默认 data/<prop>.csv）
+        output_csv: 输出 CSV 路径（默认覆盖 input）
+        sleep_s: PubChem 调用间隔（基础 sleep 秒数）
+        retries: PubChem 调用重试次数（带指数退避）
+        recompute_all: 若为 False，则保留已有数值，仅补全缺失/非法
+        use_cache: 是否读写 data/cache/<prop>.json 缓存
     """
     input_csv = input_csv or (DATA_DIR / PROPERTIES[property_name]["data_file"])
     output_csv = output_csv or input_csv
@@ -443,14 +436,14 @@ def refresh_csv(property_name: str, input_csv: Optional[Path] = None, output_csv
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Refresh property CSVs with RDKit/PubChem.")
-    parser.add_argument("-p", "--property", choices=list(PROPERTIES.keys()), required=True, help="Property key, e.g., boiling_point")
-    parser.add_argument("--input", type=Path, help="Input CSV (defaults to data/<prop>.csv)")
-    parser.add_argument("--output", type=Path, help="Output CSV (defaults to overwrite input)")
-    parser.add_argument("--sleep", type=float, default=0.25, help="Base sleep seconds between PubChem calls")
-    parser.add_argument("--retries", type=int, default=2, help="Retries for PubChem calls")
-    parser.add_argument("--keep-existing", action="store_true", help="Keep existing numeric targets; only fill missing/invalid")
-    parser.add_argument("--no-cache", action="store_true", help="Do not read/write cache files")
+    parser = argparse.ArgumentParser(description="使用 RDKit / PubChem 刷新性质 CSV 数据。")
+    parser.add_argument("-p", "--property", choices=list(PROPERTIES.keys()), required=True, help="性质 key，例如：boiling_point")
+    parser.add_argument("--input", type=Path, help="输入 CSV（默认 data/<prop>.csv）")
+    parser.add_argument("--output", type=Path, help="输出 CSV（默认覆盖输入）")
+    parser.add_argument("--sleep", type=float, default=0.25, help="PubChem 调用间隔的基础 sleep（秒）")
+    parser.add_argument("--retries", type=int, default=2, help="PubChem 调用重试次数")
+    parser.add_argument("--keep-existing", action="store_true", help="保留已有数值，仅补全缺失/非法项")
+    parser.add_argument("--no-cache", action="store_true", help="不读写 cache 文件")
     args = parser.parse_args()
 
     refresh_csv(

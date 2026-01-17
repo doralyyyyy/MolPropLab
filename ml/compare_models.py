@@ -30,7 +30,7 @@ def compare_models(property_name: str = "logp") -> Dict[str, Any]:
         property_name: 性质名称
     
     返回:
-        包含比较结果的字典
+        包含比较结果的JSON
     """
     data_file = os.path.join(ROOT, "data", PROPERTIES.get(property_name, PROPERTIES["logp"])["data_file"])
     
@@ -78,7 +78,7 @@ def compare_models(property_name: str = "logp") -> Dict[str, Any]:
         
         if os.path.exists(gnn_path):
             try:
-                # 加载模型配置（统一使用 config 变量，简化逻辑）
+                # 加载模型配置
                 config = {}
                 if os.path.exists(norm_path):
                     with open(norm_path, "r") as f:
@@ -87,7 +87,7 @@ def compare_models(property_name: str = "logp") -> Dict[str, Any]:
                     with open(os.path.join(ROOT, "configs", "gnn.yaml"), "r") as f:
                         config = yaml.safe_load(f) or {}
                 
-                # 提取配置参数（使用与 train_gnn.py 一致的默认值）
+                # 提取配置参数
                 hidden = config.get("hidden", 128)
                 layers = config.get("layers", 4)
                 dropout = config.get("dropout", 0.2)
@@ -155,7 +155,7 @@ def compare_models(property_name: str = "logp") -> Dict[str, Any]:
                     state_dict = torch.load(gnn_path, map_location=device)
                     model_g.load_state_dict(state_dict, strict=False)
                 except Exception as e:
-                    # 如果加载失败，可能是旧模型架构，提示需要重新训练
+                    # 如果加载失败，提示需要重新训练
                     results["gnn"] = {
                         "error": f"Model architecture mismatch. Please retrain the model with the new architecture. Original error: {str(e)}"
                     }
@@ -179,7 +179,7 @@ def compare_models(property_name: str = "logp") -> Dict[str, Any]:
     else:
         results["gnn"] = {"error": "GNN dependencies not available"}
     
-    # 确定更好的模型（如果两个模型都成功）
+    # 确定更好的模型
     if "error" not in results["baseline"] and "error" not in results["gnn"]:
         baseline_rmse = results["baseline"].get("rmse", float('inf'))
         gnn_rmse = results["gnn"].get("rmse", float('inf'))

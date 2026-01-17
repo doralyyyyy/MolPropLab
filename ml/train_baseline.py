@@ -44,12 +44,12 @@ class BaselineModel:
             # 极小数据集（<30个样本）：使用非常宽松的参数，确保特征能被使用
             if n_samples < 30:
                 n_estimators = max(5, min(20, n_samples // 2))
-                min_data_in_leaf = 1  # 最小值为1，允许单样本叶子
+                min_data_in_leaf = 1     # 最小值为1，允许单样本叶子
                 min_data_in_bin = 1
-                min_child_samples = 1  # 允许单样本分裂
-                subsample = 1.0  # 使用全部数据
-                colsample_bytree = 1.0  # 使用全部特征
-                max_depth = 3  # 限制树深度，避免过拟合
+                min_child_samples = 1    # 允许单样本分裂
+                subsample = 1.0          # 使用全部数据
+                colsample_bytree = 1.0   # 使用全部特征
+                max_depth = 3            # 限制树深度，避免过拟合
                 min_gain_to_split = 0.0  # 降低分裂阈值，确保能使用特征
             # 小数据集（30-100个样本）：适度调整参数
             elif n_samples < 100:
@@ -82,20 +82,20 @@ class BaselineModel:
                         min_child_samples = 20
                         subsample = 0.9
                         colsample_bytree = 0.9
-                        max_depth = -1  # 不限制深度
+                        max_depth = -1         # 不限制深度
                         min_gain_to_split = 0.0
                     else:
                         # 超大数据集（>=1000）：增加模型复杂度以获得更好性能
-                        n_estimators = 600  # 增加树的数量
+                        n_estimators = 600     # 增加树的数量
                         min_data_in_leaf = 30  # 稍微增加叶子节点最小样本数，防止过拟合
                         min_data_in_bin = 5
                         min_child_samples = 30
                         subsample = 0.9
                         colsample_bytree = 0.9
-                        max_depth = -1  # 不限制深度
+                        max_depth = -1         # 不限制深度
                         min_gain_to_split = 0.0
             
-            # 彻底抑制LightGBM的警告输出（包括stderr）
+            # 彻底抑制LightGBM的警告输出
             import sys
             import contextlib
             from io import StringIO
@@ -142,9 +142,9 @@ class BaselineModel:
             X_list.append(feat); y.append(float(tgt))
         X = np.vstack(X_list); y = np.array(y)
         
-        # 特征归一化（使用训练集的均值和标准差）
+        # 特征归一化
         self.feature_mean = np.mean(X, axis=0)
-        self.feature_std = np.std(X, axis=0) + 1e-8  # 避免除零
+        self.feature_std = np.std(X, axis=0) + 1e-8
         X_normalized = (X - self.feature_mean) / self.feature_std
         
         self.models = [self._train_one(X_normalized, y, seed=i+7) for i in range(self.n_models)]
@@ -213,16 +213,16 @@ class BaselineModel:
             obj = pickle.load(f)
         bm = BaselineModel(n_models=obj["n_models"], nbits=obj["nbits"])
         bm.models = obj["models"]; bm.is_lgb = obj.get("is_lgb", True)
-        # 加载归一化参数（向后兼容：旧模型可能没有这些参数）
+        # 加载归一化参数
         bm.feature_mean = obj.get("feature_mean", None)
         bm.feature_std = obj.get("feature_std", None)
         return bm
 
-# 返回基线模型权重文件的路径（支持多性质）
+# 返回基线模型权重文件的路径
 def quick_baseline_weights_path(property_name: str = "logp") -> str:
     return os.path.join(SAVE_DIR, f"baseline_{property_name}_v1.pkl")
 
-# 训练演示用的基线模型并保存（支持多性质）
+# 训练演示用的基线模型并保存
 def train_baseline_demo(property_name: str = "logp") -> str:
     data_file = os.path.join(ROOT, "data", PROPERTIES.get(property_name, PROPERTIES["logp"])["data_file"])
     df = ensure_demo_dataset(data_file)

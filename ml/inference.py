@@ -12,7 +12,7 @@ from typing import Dict, Any
 from utils import ROOT, PROPERTIES, HAS_TORCH, HAS_PYG, sanitize_smiles, build_graph, ensure_demo_dataset, preprocess_data, scaffold_split
 from train_baseline import BaselineModel, quick_baseline_weights_path
 
-# GNN相关导入（可能不可用）
+# GNN相关导入
 try:
     from train_gnn import GINRegressor, PotentialNetRegressor, GNNPack, quick_gnn_weights_path
     from eval_gnn import gnn_predict_atom_importance
@@ -64,7 +64,6 @@ def predict_property(smiles: str, property_name: str, model: str = "baseline") -
             return {"prediction": float("nan"), "uncertainty": float("nan"), "atom_importances": [], "sdf": "", "model":"gnn","version":version}
         # 读取配置
         norm_path = path.replace(".pth", "_norm.json")
-        # 读取配置（统一默认值与 train_gnn.py 一致）
         config = {}
         if os.path.exists(norm_path):
             with open(norm_path, "r") as f:
@@ -167,11 +166,11 @@ def predict_property(smiles: str, property_name: str, model: str = "baseline") -
         out["version"] = version
         return out
 
-# 预测所有性质的接口（保留向后兼容）
+# 预测所有性质的接口
 def predict(smiles: str, model: str = "baseline") -> Dict[str, Any]:
     """预测所有性质，返回包含所有性质预测结果的字典"""
     results = {}
-    # 使用第一个性质的原子重要性（所有性质应该相似）
+    # 使用第一个性质的原子重要性
     first_prop = list(PROPERTIES.keys())[0]
     first_result = predict_property(smiles, first_prop, model)
     
@@ -194,7 +193,7 @@ def predict(smiles: str, model: str = "baseline") -> Dict[str, Any]:
                 "error": str(e)
             }
     
-    # 返回第一个结果的原子重要性和SDF（用于3D可视化）
+    # 返回第一个结果的原子重要性和SDF
     return {
         "properties": results,
         "atom_importances": first_result.get("atom_importances", []),
@@ -266,6 +265,13 @@ def main():
             print(f"PROGRESS {i}/{total}")
             sys.stdout.flush()
         outp = a.output or os.path.join(os.path.dirname(in_path), "results.csv")
+        if not rows:
+            # 空输入写一个最小表头，避免 rows[0] 越界崩溃
+            with open(outp, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=["smiles"])
+                w.writeheader()
+            print(f"Wrote {outp} (empty input)")
+            sys.exit(0)
         with open(outp, "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
             w.writeheader()

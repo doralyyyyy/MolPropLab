@@ -10,20 +10,32 @@ const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 // 优先使用环境变量，如果没有则使用默认的Conda路径
 const PYTHON = process.env.PYTHON || (process.env.CONDA_PREFIX ? path.join(process.env.CONDA_PREFIX, "python.exe") : "python");
-const ROOT = path.resolve(__dirname, "../..");
+
+function detectRepoRoot(): string {
+  const cwd = process.cwd();
+
+  if (fs.existsSync(path.join(cwd, "ml"))) return cwd;
+  if (fs.existsSync(path.join(cwd, "..", "ml"))) return path.resolve(cwd, "..");
+
+  return path.resolve(__dirname, "../..");
+}
+
+const ROOT = process.env.MOLPROPLAB_ROOT || detectRepoRoot();
 const ML_DIR = path.join(ROOT, "ml");
 
 // 设置PyTorch环境变量，避免DLL加载问题
 process.env.TORCH_SHM_DISABLE = "1";
-const TMP_DIR = path.join(__dirname, "..", "tmp");
+const TMP_DIR = fs.existsSync(path.join(ROOT, "server"))
+  ? path.join(ROOT, "server", "tmp")
+  : path.join(__dirname, "..", "tmp");
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 
-// 定期清理旧的临时文件（超过1小时未访问的文件）
+// 定期清理旧的临时文件
 function cleanupOldFiles() {
   try {
     const files = fs.readdirSync(TMP_DIR);
     const now = Date.now();
-    const maxAge = 60 * 60 * 1000; // 1小时
+    const maxAge = 60 * 60 * 1000;
     
     for (const file of files) {
       const filePath = path.join(TMP_DIR, file);
@@ -46,7 +58,6 @@ function cleanupOldFiles() {
 // 每小时清理一次旧文件
 if (process.env.JEST_WORKER_ID === undefined) {
   const timer = setInterval(cleanupOldFiles, 60 * 60 * 1000);
-  // 避免计时器让进程无法退出（例如 Jest 测试）
   timer.unref?.();
   // 启动时也清理一次
   cleanupOldFiles();
@@ -107,7 +118,6 @@ function callPython(args: string[], onStdout?: (s: string) => void, onStderr?: (
 
     let stdout = "";
     let stderr = "";
-    // spawn 失败（例如 PYTHON 路径不存在）时，必须 resolve，否则请求会挂死
     p.on("error", (err) => {
       stderr += (stderr ? "\n" : "") + `[spawn error] ${err?.message ?? String(err)}`;
       finish({ code: 1, stdout, stderr });
@@ -140,7 +150,6 @@ app.post("/predict", async (req, res) => {
     args.push("--json");
     console.log(`[predict] Calling Python with args: ${args.join(" ")}`);
     const { code, stdout, stderr } = await callPython(args, undefined, (s) => {
-      // 打印所有stderr输出（包括调试信息）
       console.log(`[Python stderr] ${s.trim()}`);
       }, req,res
     );
@@ -165,7 +174,7 @@ const upload = multer({ dest: TMP_DIR });
 // 批量预测端口，接收CSV/XLSX文件并创建后台任务
 app.post("/batch_predict", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file" });
-  const model = (req.body.model as string) || "baseline"; // 默认使用baseline，更稳定
+  const model = (req.body.model as string) || "baseline";
   const id = crypto.randomUUID();
   const input = req.file.path;
   const output = path.join(TMP_DIR, `${id}-results.csv`);
@@ -220,7 +229,7 @@ function cleanupJobFiles(job: Job) {
       fs.unlinkSync(job.input);
       console.log(`[cleanup] Deleted input file: ${job.input}`);
     }
-    // 清理输出文件（在下载后或任务失败时）
+    // 清理输出文件
     if (job.output && fs.existsSync(job.output)) {
       fs.unlinkSync(job.output);
       console.log(`[cleanup] Deleted output file: ${job.output}`);
@@ -303,9 +312,8 @@ app.get("/models", async (_req, res) => {
   }
 });
 
-// 解释性预测端口，与predict类似但强调可解释性输出
+// 解释性预测端口
 app.post("/explain", async (req, res) => {
-  // 与predict相同，但保留为显式端口
   const { smiles, model } = req.body || {};
   if (!smiles) return res.status(400).json({ error: "Missing 'smiles'" });
   const args = ["inference.py", "--smiles", String(smiles), "--json"];

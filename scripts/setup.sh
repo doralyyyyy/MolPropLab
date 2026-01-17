@@ -34,8 +34,8 @@ fi
 echo "安装 Python 依赖..."
 cd "$(dirname "$0")/../ml"
 pip install -r ../requirements.txt
-# 安装 Node.js 依赖
 
+# 安装 Node.js 依赖
 echo "安装后端依赖..."
 cd ../server
 npm install

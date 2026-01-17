@@ -10,7 +10,7 @@ import { FiUpload, FiSearch, FiDatabase, FiBarChart2, FiHome, FiFileText, FiDown
 
 Chart.register(LineElement, PointElement, LinearScale, LogarithmicScale, CategoryScale, BarElement, Tooltip, Legend);
 
-// 3Dmol global
+// 3Dmol全局声明
 declare global {
   interface Window { $3Dmol: any; }
 }
@@ -19,14 +19,14 @@ const API = axios.create({ baseURL: "http://localhost:3001" });
 const fetcher = (url: string) => API.get(url).then(r => r.data);
 
 function colorForValue(v: number) {
-  // 0..1 -> blue..red
+  // 颜色映射
   const x = Math.max(0, Math.min(1, v));
   const r = Math.floor(255 * x);
   const b = Math.floor(255 * (1 - x));
   return `rgb(${r},50,${b})`;
 }
 
-// 3D分子可视化组件，使用3Dmol.js渲染分子结构并显示原子重要性热力图
+// 3D分子可视化组件
 const Molecule3D: React.FC<{ sdf: string; atomImportances?: number[] }> = ({ sdf, atomImportances }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
@@ -46,7 +46,7 @@ const Molecule3D: React.FC<{ sdf: string; atomImportances?: number[] }> = ({ sdf
       viewerRef.current = null;
     }
     
-    // 清空容器内容（移除所有子元素，包括 canvas）
+    // 清空容器内容
     while (container.firstChild) {
       container.removeChild(container.firstChild);
     }
@@ -102,7 +102,7 @@ const Molecule3D: React.FC<{ sdf: string; atomImportances?: number[] }> = ({ sdf
   return <div ref={containerRef} className="w-full h-[380px] rounded-lg border border-border relative" style={{ position: "relative" }} />;
 };
 
-// 页面布局组件，包含头部导航和页脚
+// 页面布局组件
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div className="min-h-screen text-foreground bg-background">
     <header className="border-b border-border">
@@ -133,7 +133,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </div>
 );
 
-// 首页组件，显示功能入口卡片
+// 首页组件
 const Home: React.FC = () => {
   const items = [
     { title: "单条预测", href: "/predict", desc: "输入 SMILES → 获取性质预测、不确定性和原子级热力图", icon: FiSearch },
@@ -172,7 +172,7 @@ const Home: React.FC = () => {
   );
 };
 
-// 单条预测页面组件，允许用户输入SMILES并查看预测结果
+// 单条预测页面组件
 const SinglePrediction: React.FC = () => {
   const [smiles, setSmiles] = useState("CCO");
   const [model, setModel] = useState<"baseline" | "gnn">("baseline");
@@ -699,7 +699,6 @@ const ExplanationViewer: React.FC = () => {
                   const exp = Math.log10(n);
                   const isPow10 = Math.abs(exp - Math.round(exp)) < 1e-6;
                   if (!isPow10) return "";
-                  // 只显示 10^k 的主刻度，减少密度
                   if (n >= 1000 || n <= 0.01) return n.toExponential(0);
                   return n.toString();
                 }

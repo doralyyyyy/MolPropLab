@@ -12,6 +12,5 @@ def test_single_smiles_baseline():
         assert "prediction" in prop_data and "uncertainty" in prop_data
 
 def test_single_smiles_gnn_fallback_ok():
-    # GNN may fallback to baseline if deps missing
     out = predict("CCO", model="gnn")
     assert "properties" in out and "atom_importances" in out

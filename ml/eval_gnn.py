@@ -24,7 +24,7 @@ import torch
 import numpy as np
 from typing import Dict, Any, Optional
 
-# 使用GNN模型进行预测，使用MC-Dropout估计不确定性，计算原子重要性（支持反标准化）
+# 使用GNN模型进行预测，使用MC-Dropout估计不确定性，计算原子重要性
 def gnn_predict_atom_importance(pack: GNNPack, smiles: str, graph_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     from utils import mol_to_sdf
     _, mol = sanitize_smiles(smiles)
@@ -44,7 +44,7 @@ def gnn_predict_atom_importance(pack: GNNPack, smiles: str, graph_cfg: Optional[
     if g is None: return {"prediction": float("nan"), "uncertainty": float("nan"), "atom_importances": [], "sdf": ""}
     device = next(pack.model.parameters()).device
     
-    # 获取标准化参数（如果存在）
+    # 获取标准化参数
     target_mean = getattr(pack.model, 'target_mean', 0.0)
     target_std = getattr(pack.model, 'target_std', 1.0)
     
@@ -53,7 +53,6 @@ def gnn_predict_atom_importance(pack: GNNPack, smiles: str, graph_cfg: Optional[
     T = 20
     preds_normalized = []
     for _ in range(T):
-        # 临时启用dropout以进行不确定性估计，但保持eval模式避免BatchNorm问题
         # 手动设置dropout层为训练模式
         for module in pack.model.modules():
             if isinstance(module, torch.nn.Dropout):
@@ -72,7 +71,7 @@ def gnn_predict_atom_importance(pack: GNNPack, smiles: str, graph_cfg: Optional[
     
     # 反标准化预测值
     pred = pred_normalized * target_std + target_mean
-    # 不确定性：标准化空间的不确定性乘以标准差（不需要加均值）
+    # 不确定性：标准化空间的不确定性乘以标准差
     unc = unc_normalized * target_std
     # 基于梯度的节点重要性计算
     pack.model.eval()
@@ -81,7 +80,7 @@ def gnn_predict_atom_importance(pack: GNNPack, smiles: str, graph_cfg: Optional[
     y = pack.model(g)
     y = y.view(-1)[0]
     y.backward()
-    grads = g.x.grad.detach().abs().sum(dim=1).cpu().numpy()  # 每个节点的梯度
+    grads = g.x.grad.detach().abs().sum(dim=1).cpu().numpy()
     if grads.max() > 0:
         imps = (grads / grads.max()).tolist()
     else:
@@ -183,14 +182,14 @@ def eval_gnn_main(args=None):
             dropout=dropout,
             pool=pool,
         ).to(device)
-    # 先加载标准化参数（如果存在），确保即使模型文件不存在也能设置默认值
+    # 先加载标准化参数，确保即使模型文件不存在也能设置默认值
     if os.path.exists(norm_path):
         with open(norm_path, "r") as f:
             norm_data = json.load(f)
             model_g.target_mean = norm_data.get("mean", 0.0)
             model_g.target_std = norm_data.get("std", 1.0)
     else:
-        # 如果没有标准化参数文件，使用默认值（不标准化）
+        # 如果没有标准化参数文件，使用默认值
         model_g.target_mean = 0.0
         model_g.target_std = 1.0
     

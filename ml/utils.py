@@ -14,7 +14,6 @@ from typing import List, Tuple, Dict, Optional
 import numpy as np
 import pandas as pd
 
-# torch / pyg (optional) - 在RDKit之前导入，避免DLL冲突
 import sys
 
 TORCH_ERROR = None
@@ -35,7 +34,6 @@ try:
             break
     
     if torch_lib_path:
-        # 将torch的lib目录添加到PATH，帮助找到DLL依赖
         current_path = os.environ.get("PATH", "")
         if torch_lib_path not in current_path:
             os.environ["PATH"] = torch_lib_path + os.pathsep + current_path
@@ -51,7 +49,7 @@ except Exception as e:
     print(f"[utils] PyTorch import failed: {e}", file=sys.stderr, flush=True)
     import traceback
     traceback.print_exc(file=sys.stderr)
-    torch = None  # type: ignore
+    torch = None
 
 # RDKit - 在PyTorch之后导入
 from rdkit import Chem
@@ -72,7 +70,7 @@ except Exception as e:
     print(f"[utils] PyTorch Geometric import failed: {e}", file=sys.stderr, flush=True)
     import traceback
     traceback.print_exc(file=sys.stderr)
-    Data = None  # type: ignore
+    Data = None
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SAVE_DIR = os.path.join(ROOT, "saved_models")
@@ -136,7 +134,7 @@ def featurize_descriptors(mol: Chem.Mol) -> np.ndarray:
     feats.append(arom / max(1, mol.GetNumAtoms()))
     return np.array(feats, dtype=float)
 
-# 生成ECFP（扩展连接性指纹）特征向量，返回指纹数组和位信息映射
+# 生成ECFP特征向量，返回指纹数组和位信息映射
 def featurize_ecfp(mol: Chem.Mol, nbits: int = 1024, radius: int = 2) -> Tuple[np.ndarray, Dict[int, List[Tuple[int, int]]]]:
     bitInfo: Dict[int, List[Tuple[int,int]]] = {}
     fp = rdMolDescriptors.GetMorganFingerprintAsBitVect(Chem.RemoveHs(mol), radius, nBits=nbits, bitInfo=bitInfo)
@@ -231,7 +229,7 @@ def build_graph(
     if not (HAS_TORCH and HAS_PYG):
         return None
 
-    # 生成3D坐标（可选），失败则退化为bond-only
+    # 生成3D坐标
     mol_for_geom = _try_embed_3d(mol, seed=seed) if use_3d else None
     has_3d = mol_for_geom is not None
     mol_no_h = Chem.RemoveHs(mol_for_geom if has_3d else mol, updateExplicitCount=True, sanitize=False)
@@ -413,7 +411,7 @@ def preprocess_data(df: pd.DataFrame, target_col: str, remove_outliers: bool = T
     # 移除目标值为空的行
     df = df.dropna(subset=[target_col])
     
-    # 2. 处理异常值（使用IQR方法或Z-score方法）
+    # 2. 处理异常值
     if remove_outliers and len(df) > 10:  # 至少需要10个样本才进行异常值检测
         target_values = pd.to_numeric(df[target_col], errors='coerce')
         valid_mask = ~target_values.isna()
@@ -426,7 +424,7 @@ def preprocess_data(df: pd.DataFrame, target_col: str, remove_outliers: bool = T
             lower_bound = Q1 - 1.5 * IQR
             upper_bound = Q3 + 1.5 * IQR
             outlier_mask = (target_values >= lower_bound) & (target_values <= upper_bound)
-        else:  # zscore
+        else:
             # Z-score方法：移除Z-score绝对值大于3的值
             mean_val = target_values[valid_mask].mean()
             std_val = target_values[valid_mask].std()

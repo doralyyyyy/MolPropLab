@@ -63,7 +63,7 @@ except (RuntimeError, ImportError):
 # 从 inference 导入预测函数
 from inference import predict, predict_property
 
-# 训练所有性质的函数（需要从两个模块导入）
+# 训练所有性质的函数
 def train_all_properties(model_type: str = "baseline"):
     """训练所有性质的模型"""
     if model_type == "baseline":
