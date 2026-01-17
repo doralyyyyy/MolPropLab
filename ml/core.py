@@ -37,7 +37,7 @@ try:
         build_graph_dataset,
         quick_gnn_weights_path
     )
-except RuntimeError:
+except (RuntimeError, ImportError):
     # 如果GNN依赖不可用，创建占位符
     GINRegressor = None
     GNNPack = None

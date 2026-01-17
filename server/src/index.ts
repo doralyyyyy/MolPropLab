@@ -44,9 +44,13 @@ function cleanupOldFiles() {
 }
 
 // 每小时清理一次旧文件
-setInterval(cleanupOldFiles, 60 * 60 * 1000);
-// 启动时也清理一次
-cleanupOldFiles();
+if (process.env.JEST_WORKER_ID === undefined) {
+  const timer = setInterval(cleanupOldFiles, 60 * 60 * 1000);
+  // 避免计时器让进程无法退出（例如 Jest 测试）
+  timer.unref?.();
+  // 启动时也清理一次
+  cleanupOldFiles();
+}
 
 // 调试信息：打印实际使用的Python路径
 console.log(`[server] Using Python: ${PYTHON}`);
@@ -73,6 +77,12 @@ function callPython(args: string[], onStdout?: (s: string) => void, onStderr?: (
     
     // 前端断开，杀死子进程
     let killed = false;
+    let settled = false;
+    const finish = (payload: { code: number; stdout: string; stderr: string }) => {
+      if (settled) return;
+      settled = true;
+      resolve(payload);
+    };
     const killChild = () => {
       if (killed) return;
       killed = true;
@@ -97,6 +107,11 @@ function callPython(args: string[], onStdout?: (s: string) => void, onStderr?: (
 
     let stdout = "";
     let stderr = "";
+    // spawn 失败（例如 PYTHON 路径不存在）时，必须 resolve，否则请求会挂死
+    p.on("error", (err) => {
+      stderr += (stderr ? "\n" : "") + `[spawn error] ${err?.message ?? String(err)}`;
+      finish({ code: 1, stdout, stderr });
+    });
     p.stdout.on("data", (d) => {
       const s = d.toString();
       stdout += s;
@@ -107,7 +122,7 @@ function callPython(args: string[], onStdout?: (s: string) => void, onStderr?: (
       stderr += s;
       onStderr?.(s);
     });
-    p.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    p.on("close", (code) => finish({ code: code ?? 0, stdout, stderr }));
   });
 }
 
