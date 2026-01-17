@@ -37,16 +37,16 @@ def calculate_metrics(y_true: list, y_pred: list) -> dict:
     if len(y_true) == 0:
         return {"error": "No valid predictions"}
     
-    # RMSE (Root Mean Squared Error)
+    # RMSE
     rmse = math.sqrt(mean_squared_error(y_true, y_pred))
     
-    # MAE (Mean Absolute Error)
+    # MAE
     mae = mean_absolute_error(y_true, y_pred)
     
-    # R2 (Coefficient of Determination)
+    # R2
     r2 = r2_score(y_true, y_pred)
     
-    # MAPE (Mean Absolute Percentage Error)
+    # MAPE
     # 避免除零，只计算非零真实值
     non_zero_mask = np.abs(y_true) > 1e-8
     if np.sum(non_zero_mask) > 0:
