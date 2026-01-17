@@ -34,14 +34,8 @@ fi
 echo "安装 Python 依赖..."
 cd "$(dirname "$0")/../ml"
 pip install -r ../requirements.txt
-
-# 下载模型权重（可选）
-if [ -f "download_weights.py" ]; then
-    echo "下载模型权重（可选）..."
-    python download_weights.py || echo "模型权重下载失败，可以稍后手动下载"
-fi
-
 # 安装 Node.js 依赖
+
 echo "安装后端依赖..."
 cd ../server
 npm install

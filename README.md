@@ -99,10 +99,9 @@ bash scripts/setup.sh
 
 脚本会自动完成以下操作：
 - 检查 Conda 环境
-- 安装 RDKit（如果缺失）
+- 安装 RDKit
 - 安装所有 Python 依赖
 - 安装 Node.js 后端和前端依赖
-- 下载模型权重（如果可用）
 
 > **注意**：Windows 用户可以使用 Git Bash 或 WSL 运行此脚本，或按照下面的手动安装步骤操作。
 
@@ -171,9 +170,9 @@ npm run dev
 
 后端默认运行在：`http://localhost:3001`
 
-> **注意**：`server/package.json` 中的 `dev` 脚本已配置 Python 路径。如果使用不同的 Conda 环境路径，可以：
-> - 修改 `server/package.json` 中的 `PYTHON` 环境变量
-> - 或在启动前设置环境变量：`set PYTHON=你的python路径 && npm run dev`
+> **注意**：后端启动时在 `server/src/index.ts` 按 `PYTHON` / `CONDA_PREFIX` / `python` 选择解释器。如果使用不同的 Conda 环境路径，可以：
+> - 启动前设置环境变量：`set PYTHON=你的python路径 && npm run dev`
+> - 或在系统环境变量中设置 `PYTHON`
 
 ### 启动前端
 

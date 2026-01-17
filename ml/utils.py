@@ -337,7 +337,7 @@ def murcko_scaffold(smiles: str) -> str:
         return ""
 
 # 基于分子骨架进行数据集划分，确保相同骨架的分子在同一集合中
-def scaffold_split(df: pd.DataFrame, frac=(0.8,0.1,0.1), seed=42) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def scaffold_split(df: pd.DataFrame, frac=(0.7,0.15,0.15), seed=42) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     scaff2rows: Dict[str, List[int]] = {}
     for i, smi in enumerate(df["smiles"].tolist()):
         s = murcko_scaffold(smi)
